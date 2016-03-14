@@ -30,7 +30,7 @@ libzopfli:
 # ZopfliPNG binary
 zopflipng:
 	$(CC) $(ZOPFLILIB_SRC) $(CFLAGS) -c
-	$(CXX) $(ZOPFLILIB_OBJ) $(LODEPNG_SRC) $(ZOPFLIPNGLIB_SRC) $(ZOPFLIPNGBIN_SRC) $(CFLAGS) -o zopflipng
+	$(CXX) $(ZOPFLILIB_OBJ) $(LODEPNG_SRC) $(ZOPFLIPNGLIB_SRC) $(ZOPFLIPNGBIN_SRC) $(CXXFLAGS) -o zopflipng
 
 # ZopfliPNG shared library
 libzopflipng:

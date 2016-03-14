@@ -542,6 +542,10 @@ typedef enum LodePNGFilterStrategy
   LFS_ZERO,
   /*Use filter that gives minimum sum, as described in the official PNG filter heuristic.*/
   LFS_MINSUM,
+  /*Use the filter type that gives the least number of distinct bytes*/
+  LFS_DISTINCT_BYTES,
+  /*Use the filter type that gives the least number of distinct bigrams*/
+  LFS_DISTINCT_BIGRAMS,
   /*Use the filter type that gives smallest Shannon entropy for this scanline. Depending
   on the image, this is better or worse than minsum.*/
   LFS_ENTROPY,
@@ -551,7 +555,12 @@ typedef enum LodePNGFilterStrategy
   */
   LFS_BRUTE_FORCE,
   /*use predefined_filters buffer: you specify the filter type for each scanline*/
-  LFS_PREDEFINED
+  LFS_PREDEFINED,
+  /*
+  Brute force search PNG filters by comprssing each filter and preceeding filters for each scanline.
+  Extremely slow.
+  */
+  LFS_INCREMENTAL,
 } LodePNGFilterStrategy;
 
 /*Gives characteristics about the colors of the image, which helps decide which color model to use for encoding.

@@ -192,11 +192,20 @@ unsigned TryOptimize(
     case kStrategyMinSum:
       state.encoder.filter_strategy = LFS_MINSUM;
       break;
+  case kStrategyDistinctBytes:
+      state.encoder.filter_strategy = LFS_DISTINCT_BYTES;
+      break;
+  case kStrategyDistinctBigrams:
+      state.encoder.filter_strategy = LFS_DISTINCT_BIGRAMS;
+      break;
     case kStrategyEntropy:
       state.encoder.filter_strategy = LFS_ENTROPY;
       break;
     case kStrategyBruteForce:
       state.encoder.filter_strategy = LFS_BRUTE_FORCE;
+      break;
+  case kStrategyIncremental:
+      state.encoder.filter_strategy = LFS_INCREMENTAL;
       break;
     case kStrategyOne:
     case kStrategyTwo:
@@ -333,14 +342,18 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
 
   ZopfliPNGFilterStrategy filterstrategies[kNumFilterStrategies] = {
     kStrategyZero, kStrategyOne, kStrategyTwo, kStrategyThree, kStrategyFour,
-    kStrategyMinSum, kStrategyEntropy, kStrategyPredefined, kStrategyBruteForce
+    kStrategyMinSum, kStrategyDistinctBytes, kStrategyDistinctBigrams,
+    kStrategyEntropy, kStrategyPredefined, kStrategyBruteForce,
+    kStrategyIncremental
   };
   bool strategy_enable[kNumFilterStrategies] = {
-    false, false, false, false, false, false, false, false, false
+    false, false, false, false, false, false, false, false, false, false, false,
+    false
   };
   std::string strategy_name[kNumFilterStrategies] = {
     "zero", "one", "two", "three", "four",
-    "minimum sum", "entropy", "predefined", "brute force"
+    "minimum sum", "distinct bytes", "distinct bigrams", "entropy",
+    "predefined", "brute force", "incremental brute force"
   };
   for (size_t i = 0; i < png_options.filter_strategies.size(); i++) {
     strategy_enable[png_options.filter_strategies[i]] = true;

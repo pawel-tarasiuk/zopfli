@@ -96,10 +96,13 @@ void ShowHelp() {
          "--filters=[types]: filter strategies to try:\n"
          " 0-4: give all scanlines PNG filter type 0-4\n"
          " m: minimum sum\n"
+         " y: distinct bytes\n"
+         " w: distinct byte pairs\n"
          " e: entropy\n"
          " p: predefined (keep from input, this likely overlaps another"
          " strategy)\n"
-         " b: brute force (experimental)\n"
+         " b: brute force (slow)\n"
+         " i: incremental brute force (very slow)\n"
          " By default, if this argument is not given, one that is most likely"
          " the best for this image is chosen by trying faster compression with"
          " each type.\n"
@@ -201,9 +204,12 @@ int main(int argc, char *argv[]) {
             case '3': strategy = kStrategyThree; break;
             case '4': strategy = kStrategyFour; break;
             case 'm': strategy = kStrategyMinSum; break;
+            case 'y': strategy = kStrategyDistinctBytes; break;
+            case 'w': strategy = kStrategyDistinctBigrams; break;
             case 'e': strategy = kStrategyEntropy; break;
             case 'p': strategy = kStrategyPredefined; break;
             case 'b': strategy = kStrategyBruteForce; break;
+            case 'i': strategy = kStrategyIncremental; break;
             default:
               printf("Unknown filter strategy: %c\n", f);
               return 1;
