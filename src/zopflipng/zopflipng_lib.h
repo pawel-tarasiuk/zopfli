@@ -70,6 +70,8 @@ typedef struct CZopfliPNGOptions {
   int num_iterations_large;
 
   int block_split_strategy;
+
+  int max_blocks;
 } CZopfliPNGOptions;
 
 // Sets the default options
@@ -123,6 +125,9 @@ struct ZopfliPNGOptions {
 
   // Unused, left for backwards compatiblity.
   int block_split_strategy;
+
+  // Zopfli maximum number of deflate blocks to split into
+  int max_blocks;
 };
 
 // Returns 0 on success, error code otherwise.

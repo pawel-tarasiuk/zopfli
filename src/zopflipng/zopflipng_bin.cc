@@ -92,6 +92,9 @@ void ShowHelp() {
          "--iterations=[number]: number of iterations, more iterations makes it"
          " slower but provides slightly better compression. Default: 15 for"
          " small files, 5 for large files.\n"
+         "--max_blocks=[number]: maximum amount of blocks to split into (0 for"
+         " unlimited, but this can give extreme results that hurt compression"
+         " on some files). Default: 15\n"
          "--splitting=[0-3]: ignored, left for backwards compatibility\n"
          "--filters=[types]: filter strategies to try:\n"
          " 0-4: give all scanlines PNG filter type 0-4\n"
@@ -191,6 +194,9 @@ int main(int argc, char *argv[]) {
         if (num < 1) num = 1;
         png_options.num_iterations = num;
         png_options.num_iterations_large = num;
+      } else if (name == "--max_blocks") {
+        if (num < 0) num = 0;
+        png_options.max_blocks = num;
       } else if (name == "--splitting") {
         // ignored
       } else if (name == "--filters") {

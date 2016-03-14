@@ -38,7 +38,8 @@ ZopfliPNGOptions::ZopfliPNGOptions()
   , use_zopfli(true)
   , num_iterations(15)
   , num_iterations_large(5)
-  , block_split_strategy(1) {
+  , block_split_strategy(1)
+  , max_blocks(15) {
 }
 
 // Deflate compressor passed as fuction pointer to LodePNG to have it use Zopfli
@@ -55,6 +56,7 @@ unsigned CustomPNGDeflate(unsigned char** out, size_t* outsize,
   options.verbose = png_options->verbose;
   options.numiterations = insize < 200000
       ? png_options->num_iterations : png_options->num_iterations_large;
+  options.blocksplittingmax = png_options->max_blocks;
 
   ZopfliDeflate(&options, 2 /* Dynamic */, 1, in, insize, &bp, out, outsize);
 
@@ -442,6 +444,7 @@ extern "C" void CZopfliPNGSetDefaults(CZopfliPNGOptions* png_options) {
   png_options->num_iterations       = opts.num_iterations;
   png_options->num_iterations_large = opts.num_iterations_large;
   png_options->block_split_strategy = opts.block_split_strategy;
+  png_options->max_blocks           = opts.max_blocks;
 }
 
 extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
@@ -460,6 +463,7 @@ extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
   opts.num_iterations       = png_options->num_iterations;
   opts.num_iterations_large = png_options->num_iterations_large;
   opts.block_split_strategy = png_options->block_split_strategy;
+  opts.max_blocks           = png_options->max_blocks;
 
   for (int i = 0; i < png_options->num_filter_strategies; i++) {
     opts.filter_strategies.push_back(png_options->filter_strategies[i]);
