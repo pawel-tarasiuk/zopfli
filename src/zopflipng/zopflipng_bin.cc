@@ -106,6 +106,7 @@ void ShowHelp() {
          " strategy)\n"
          " b: brute force (slow)\n"
          " i: incremental brute force (very slow)\n"
+         " g: genetic algorithm*\n"
          " By default, if this argument is not given, one that is most likely"
          " the best for this image is chosen by trying faster compression with"
          " each type.\n"
@@ -118,13 +119,26 @@ void ShowHelp() {
          " ZopfliPNG only keeps the following chunks because they are"
          " essential: IHDR, PLTE, tRNS, IDAT and IEND.\n"
          "\n"
+         "*Genetic algorithm filter options:\n"
+         "--ga_population_size: number of genomes in pool. Default: 19\n"
+         "--ga_max_evaluations: overall maximum number of evaluations (0 for"
+         " unlimited). Default: 0\n"
+         "--ga_stagnate_evaluations: number of sequential evaluations to try"
+         " without improvement. Default: 15\n"
+         "--ga_mutation_probability: probability of mutation per gene per"
+         " generation. Default: 0.01\n"
+         "--ga_crossover_probability: probability of crossover pergeneration."
+         " Default: 0.9\n"
+         "--ga_number_of_offspring: number of offspring per generation."
+         " Default: 2\n"
+         "\n"
          "Usage examples:\n"
          "Optimize a file and overwrite if smaller: zopflipng infile.png"
          " outfile.png\n"
          "Compress more: zopflipng -m infile.png outfile.png\n"
          "Optimize multiple files: zopflipng --prefix a.png b.png c.png\n"
          "Compress really good and trying all filter strategies: zopflipng"
-         " --iterations=500 --filters=01234mepb --lossy_8bit"
+         " --iterations=500 --filters=01234mywepbig --lossy_8bit"
          " --lossy_transparent infile.png outfile.png\n");
 }
 
@@ -216,6 +230,7 @@ int main(int argc, char *argv[]) {
             case 'p': strategy = kStrategyPredefined; break;
             case 'b': strategy = kStrategyBruteForce; break;
             case 'i': strategy = kStrategyIncremental; break;
+            case 'g': strategy = kStrategyGeneticAlgorithm; break;
             default:
               printf("Unknown filter strategy: %c\n", f);
               return 1;
@@ -240,6 +255,26 @@ int main(int argc, char *argv[]) {
       } else if (name == "--prefix") {
         use_prefix = true;
         if (!value.empty()) prefix = value;
+      } else if (name == "--ga_population_size") {
+        if (num < 1) num = 1;
+        png_options.ga_population_size = num;
+      } else if (name == "--ga_max_evaluations") {
+        if (num < 0) num = 0;
+        png_options.ga_max_evaluations = num;
+    } else if (name == "--ga_stagnate_evaluations") {
+        if (num < 1) num = 1;
+        png_options.ga_stagnate_evaluations = num;
+      } else if (name == "--ga_mutation_probability") {
+        if (num < 0) num = 0;
+        if (num > 1) num = 1;
+        png_options.ga_mutation_probability = num;
+      } else if (name == "--ga_crossover_probability") {
+        if (num < 0) num = 0;
+        if (num > 1) num = 1;
+        png_options.ga_crossover_probability = num;
+      } else if (name == "--ga_number_of_offspring") {
+        if (num < 1) num = 1;
+        png_options.ga_number_of_offspring = num;
       } else if (name == "--help") {
         ShowHelp();
         return 0;

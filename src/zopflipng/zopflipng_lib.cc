@@ -39,7 +39,13 @@ ZopfliPNGOptions::ZopfliPNGOptions()
   , num_iterations(15)
   , num_iterations_large(5)
   , block_split_strategy(1)
-  , max_blocks(15) {
+  , max_blocks(15)
+  , ga_population_size(19)
+  , ga_max_evaluations(0)
+  , ga_stagnate_evaluations(15)
+  , ga_mutation_probability(0.01)
+  , ga_crossover_probability(0.9)
+  , ga_number_of_offspring(2) {
 }
 
 // Deflate compressor passed as fuction pointer to LodePNG to have it use Zopfli
@@ -164,10 +170,11 @@ unsigned TryOptimize(
     const std::vector<unsigned char>& origfile,
     ZopfliPNGFilterStrategy filterstrategy,
     bool use_zopfli, int windowsize, const ZopfliPNGOptions* png_options,
-    std::vector<unsigned char>* out) {
+    std::vector<unsigned char>* out, unsigned char* filterbank) {
   unsigned error = 0;
 
   lodepng::State state;
+  state.encoder.verbose = png_options->verbose;
   state.encoder.zlibsettings.windowsize = windowsize;
   if (use_zopfli && png_options->use_zopfli) {
     state.encoder.zlibsettings.custom_deflate = CustomPNGDeflate;
@@ -209,6 +216,21 @@ unsigned TryOptimize(
   case kStrategyIncremental:
       state.encoder.filter_strategy = LFS_INCREMENTAL;
       break;
+  case kStrategyGeneticAlgorithm:
+      state.encoder.filter_strategy = LFS_GENETIC_ALGORITHM;
+      state.encoder.predefined_filters = filterbank;
+      state.encoder.ga.number_of_generations = png_options->ga_max_evaluations;
+      state.encoder.ga.number_of_stagnations =
+        png_options->ga_stagnate_evaluations;
+      state.encoder.ga.population_size = png_options->ga_population_size;
+      state.encoder.ga.mutation_probability =
+        png_options->ga_mutation_probability;
+      state.encoder.ga.crossover_probability =
+        png_options->ga_crossover_probability;
+      state.encoder.ga.number_of_offspring =
+        std::min(png_options->ga_number_of_offspring,
+                 png_options->ga_population_size);
+      break;
     case kStrategyOne:
     case kStrategyTwo:
     case kStrategyThree:
@@ -225,6 +247,8 @@ unsigned TryOptimize(
       state.encoder.predefined_filters = &filters[0];
       break;
     default:
+      state.encoder.filter_strategy = LFS_PREDEFINED;
+      state.encoder.predefined_filters = filterbank;
       break;
   }
 
@@ -270,6 +294,20 @@ unsigned TryOptimize(
   return 0;
 }
 
+static void InitXORShift128Plus(uint64_t* s) {
+  s[0] = 1;
+  s[1] = 2;
+}
+
+static uint64_t XORShift128Plus(uint64_t* s) {
+  uint64_t x = s[0];
+  uint64_t const y = s[1];
+  s[0] = y;
+  x ^= x << 23;
+  s[1] = x ^ y ^ (x >> 17) ^ (y >> 26);
+  return s[1] + y;
+}
+
 // Use fast compression to check which PNG filter strategy gives the smallest
 // output. This allows to then do the slow and good compression only on that
 // filter type.
@@ -279,33 +317,58 @@ unsigned AutoChooseFilterStrategy(const std::vector<unsigned char>& image,
                                   const std::vector<unsigned char>& origfile,
                                   int numstrategies,
                                   ZopfliPNGFilterStrategy* strategies,
-                                  bool* enable) {
-  std::vector<unsigned char> out;
+                                  const ZopfliPNGOptions* png_options,
+                                  std::vector<unsigned char>* resultpng) {
   size_t bestsize = 0;
   int bestfilter = 0;
-
+  std::vector<unsigned char> filterbank(
+      std::max(numstrategies, png_options->ga_population_size) * h);
+  std::vector<unsigned char> filter;
+  // random filters
+  uint64_t r[2];
+  InitXORShift128Plus(r);
+  for (unsigned i = 0; i < filterbank.size(); ++i) {
+    filterbank[i] = XORShift128Plus(r) % 5;
+  }
+  std::string strategy_name[kNumFilterStrategies] = {
+    "zero", "one", "two", "three", "four",
+    "minimum sum", "distinct bytes", "distinct bigrams", "entropy",
+    "predefined", "brute force", "incremental brute force", "genetic algorithm"
+  };
   // A large window size should still be used to do the quick compression to
   // try out filter strategies: which filter strategy is the best depends
   // largely on the window size, the closer to the actual used window size the
   // better.
-  int windowsize = 8192;
+  int windowsize = 32768;
+  std::vector<unsigned char> out;
 
   for (int i = 0; i < numstrategies; i++) {
     out.clear();
     unsigned error = TryOptimize(image, w, h, inputstate, bit16, origfile,
-                                 strategies[i], false, windowsize, 0, &out);
+                                 strategies[i], false, windowsize, png_options,
+                                 &out, &filterbank[0]);
     if (error) return error;
+    if (png_options->verbose) {
+      printf("Filter strategy %s: %d bytes\n",
+             strategy_name[i].c_str(), (int) out.size());
+    }
+    lodepng::getFilterTypes(filter, out);
+    std::copy(filter.begin(), filter.end(), filterbank.begin() + i * h);
     if (bestsize == 0 || out.size() < bestsize) {
       bestsize = out.size();
       bestfilter = i;
     }
   }
 
-  for (int i = 0; i < numstrategies; i++) {
-    enable[i] = (i == bestfilter);
-  }
+  out.clear();
+  unsigned error = TryOptimize(image, w, h, inputstate, bit16, origfile,
+                               kNumFilterStrategies
+                               /* trigger precalculated default path */,
+                               true /* use_zopfli */, windowsize, png_options,
+                               &out, &filterbank[bestfilter * h]);
+  (*resultpng).swap(out);
 
-  return 0;  /* OK */
+  return error;
 }
 
 // Keeps chunks with given names from the original png by literally copying them
@@ -346,16 +409,16 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     kStrategyZero, kStrategyOne, kStrategyTwo, kStrategyThree, kStrategyFour,
     kStrategyMinSum, kStrategyDistinctBytes, kStrategyDistinctBigrams,
     kStrategyEntropy, kStrategyPredefined, kStrategyBruteForce,
-    kStrategyIncremental
+    kStrategyIncremental, kStrategyGeneticAlgorithm
   };
   bool strategy_enable[kNumFilterStrategies] = {
     false, false, false, false, false, false, false, false, false, false, false,
-    false
+    false, false
   };
   std::string strategy_name[kNumFilterStrategies] = {
     "zero", "one", "two", "three", "four",
     "minimum sum", "distinct bytes", "distinct bigrams", "entropy",
-    "predefined", "brute force", "incremental brute force"
+    "predefined", "brute force", "incremental brute force", "genetic algorithm"
   };
   for (size_t i = 0; i < png_options.filter_strategies.size(); i++) {
     strategy_enable[png_options.filter_strategies[i]] = true;
@@ -393,36 +456,45 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     }
 
     if (png_options.auto_filter_strategy) {
-      error = AutoChooseFilterStrategy(image, w, h, inputstate, bit16,
-                                       origpng,
-                                       /* Don't try brute force */
-                                       kNumFilterStrategies - 1,
-                                       filterstrategies, strategy_enable);
+      error = AutoChooseFilterStrategy(image, w, h, inputstate, bit16, origpng,
+                                       kNumFilterStrategies, filterstrategies,
+                                       &png_options, resultpng);
+    } else {
+      size_t bestsize = 0;
+      std::vector<unsigned char> filterbank(
+          std::max(int(kNumFilterStrategies),
+                   png_options.ga_population_size) * h);
+      std::vector<unsigned char> filter;
+      // random filters
+      uint64_t r[2];
+      InitXORShift128Plus(r);
+      for (unsigned i = 0; i < filterbank.size(); ++i) {
+        filterbank[i] = XORShift128Plus(r) % 5;
+      }
+      for (int i = 0; i < kNumFilterStrategies; i++) {
+        if (!strategy_enable[i]) continue;
+
+        std::vector<unsigned char> temp;
+        error = TryOptimize(image, w, h, inputstate, bit16, origpng,
+                            filterstrategies[i], true /* use_zopfli */,
+                            windowsize, &png_options, &temp, &filterbank[0]);
+        if (!error) {
+          if (verbose) {
+            printf("Filter strategy %s: %d bytes\n",
+                   strategy_name[i].c_str(), (int) temp.size());
+          }
+          lodepng::getFilterTypes(filter, temp);
+          std::copy(filter.begin(), filter.end(), filterbank.begin() + i * h);
+          if (bestsize == 0 || temp.size() < bestsize) {
+            bestsize = temp.size();
+            (*resultpng).swap(temp);  // Store best result so far in the output.
+          }
+        }
+      }
     }
   }
 
   if (!error) {
-    size_t bestsize = 0;
-
-    for (int i = 0; i < kNumFilterStrategies; i++) {
-      if (!strategy_enable[i]) continue;
-
-      std::vector<unsigned char> temp;
-      error = TryOptimize(image, w, h, inputstate, bit16, origpng,
-                          filterstrategies[i], true /* use_zopfli */,
-                          windowsize, &png_options, &temp);
-      if (!error) {
-        if (verbose) {
-          printf("Filter strategy %s: %d bytes\n",
-                 strategy_name[i].c_str(), (int) temp.size());
-        }
-        if (bestsize == 0 || temp.size() < bestsize) {
-          bestsize = temp.size();
-          (*resultpng).swap(temp);  // Store best result so far in the output.
-        }
-      }
-    }
-
     if (!png_options.keepchunks.empty()) {
       KeepChunks(origpng, png_options.keepchunks, resultpng);
     }
@@ -437,14 +509,20 @@ extern "C" void CZopfliPNGSetDefaults(CZopfliPNGOptions* png_options) {
   // Constructor sets the defaults
   ZopfliPNGOptions opts;
 
-  png_options->lossy_transparent    = opts.lossy_transparent;
-  png_options->lossy_8bit           = opts.lossy_8bit;
-  png_options->auto_filter_strategy = opts.auto_filter_strategy;
-  png_options->use_zopfli           = opts.use_zopfli;
-  png_options->num_iterations       = opts.num_iterations;
-  png_options->num_iterations_large = opts.num_iterations_large;
-  png_options->block_split_strategy = opts.block_split_strategy;
-  png_options->max_blocks           = opts.max_blocks;
+  png_options->lossy_transparent        = opts.lossy_transparent;
+  png_options->lossy_8bit               = opts.lossy_8bit;
+  png_options->auto_filter_strategy     = opts.auto_filter_strategy;
+  png_options->use_zopfli               = opts.use_zopfli;
+  png_options->num_iterations           = opts.num_iterations;
+  png_options->num_iterations_large     = opts.num_iterations_large;
+  png_options->block_split_strategy     = opts.block_split_strategy;
+  png_options->max_blocks               = opts.max_blocks;
+  png_options->ga_population_size       = opts.ga_population_size;
+  png_options->ga_max_evaluations       = opts.ga_max_evaluations;
+  png_options->ga_stagnate_evaluations  = opts.ga_stagnate_evaluations;
+  png_options->ga_mutation_probability  = opts.ga_mutation_probability;
+  png_options->ga_crossover_probability = opts.ga_crossover_probability;
+  png_options->ga_number_of_offspring   = opts.ga_number_of_offspring;
 }
 
 extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
@@ -456,14 +534,20 @@ extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
   ZopfliPNGOptions opts;
 
   // Copy over to the C++-style struct
-  opts.lossy_transparent    = !!png_options->lossy_transparent;
-  opts.lossy_8bit           = !!png_options->lossy_8bit;
-  opts.auto_filter_strategy = !!png_options->auto_filter_strategy;
-  opts.use_zopfli           = !!png_options->use_zopfli;
-  opts.num_iterations       = png_options->num_iterations;
-  opts.num_iterations_large = png_options->num_iterations_large;
-  opts.block_split_strategy = png_options->block_split_strategy;
-  opts.max_blocks           = png_options->max_blocks;
+  opts.lossy_transparent        = !!png_options->lossy_transparent;
+  opts.lossy_8bit               = !!png_options->lossy_8bit;
+  opts.auto_filter_strategy     = !!png_options->auto_filter_strategy;
+  opts.use_zopfli               = !!png_options->use_zopfli;
+  opts.num_iterations           = png_options->num_iterations;
+  opts.num_iterations_large     = png_options->num_iterations_large;
+  opts.block_split_strategy     = png_options->block_split_strategy;
+  opts.max_blocks               = png_options->max_blocks;
+  opts.ga_population_size       = png_options->ga_population_size;
+  opts.ga_max_evaluations       = png_options->ga_max_evaluations;
+  opts.ga_stagnate_evaluations  = png_options->ga_stagnate_evaluations;
+  opts.ga_mutation_probability  = png_options->ga_mutation_probability;
+  opts.ga_crossover_probability = png_options->ga_crossover_probability;
+  opts.ga_number_of_offspring   = png_options->ga_number_of_offspring;
 
   for (int i = 0; i < png_options->num_filter_strategies; i++) {
     opts.filter_strategies.push_back(png_options->filter_strategies[i]);

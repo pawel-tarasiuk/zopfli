@@ -27,6 +27,7 @@ freely, subject to the following restrictions:
 #define LODEPNG_H
 
 #include <string.h> /*for size_t*/
+#include <limits.h>
 
 extern const char* LODEPNG_VERSION_STRING;
 
@@ -561,6 +562,8 @@ typedef enum LodePNGFilterStrategy
   Extremely slow.
   */
   LFS_INCREMENTAL,
+  /*Use genetic algorithm to search for filters (like pngwolf)*/
+  LFS_GENETIC_ALGORITHM
 } LodePNGFilterStrategy;
 
 /*Gives characteristics about the colors of the image, which helps decide which color model to use for encoding.
@@ -589,6 +592,16 @@ Chooses an optimal color model, e.g. grey if only grey pixels, palette if < 256 
 unsigned lodepng_auto_choose_color(LodePNGColorMode* mode_out,
                                    const unsigned char* image, unsigned w, unsigned h,
                                    const LodePNGColorMode* mode_in);
+
+typedef struct GeneticAlgorithmSettings
+{
+  unsigned number_of_generations;
+  unsigned number_of_stagnations;
+  unsigned population_size;
+  float mutation_probability;
+  float crossover_probability;
+  unsigned number_of_offspring;
+} GeneticAlgorithmSettings;
 
 /*Settings for the encoder.*/
 typedef struct LodePNGEncoderSettings
@@ -620,6 +633,8 @@ typedef struct LodePNGEncoderSettings
   /*encode text chunks as zTXt chunks instead of tEXt chunks, and use compression in iTXt chunks*/
   unsigned text_compression;
 #endif /*LODEPNG_COMPILE_ANCILLARY_CHUNKS*/
+  GeneticAlgorithmSettings ga;
+  bool verbose;
 } LodePNGEncoderSettings;
 
 void lodepng_encoder_settings_init(LodePNGEncoderSettings* settings);

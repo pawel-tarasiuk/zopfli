@@ -5132,6 +5132,24 @@ static float flog2(float f)
   return result + 1.442695f * (f * f * f / 3 - 3 * f * f / 2 + 3 * f - 1.83333f);
 }
 
+static void InitXORShift128Plus(uint64_t* s) {
+  s[0] = 1;
+  s[1] = 2;
+}
+
+static uint64_t XORShift128Plus(uint64_t* s) {
+  uint64_t x = s[0];
+  uint64_t const y = s[1];
+  s[0] = y;
+  x ^= x << 23;
+  s[1] = x ^ y ^ (x >> 17) ^ (y >> 26);
+  return s[1] + y;
+}
+
+static double XORShift128PlusNorm(uint64_t* s) {
+  return double(XORShift128Plus(s)) / UINT64_MAX;
+}
+
 static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, unsigned h,
                        const LodePNGColorMode* info, const LodePNGEncoderSettings* settings)
 {
@@ -5150,6 +5168,8 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
   unsigned x, y;
   unsigned error = 0;
   LodePNGFilterStrategy strategy = settings->filter_strategy;
+  uint64_t r[2];
+  InitXORShift128Plus(r);
 
   /*
   There is a heuristic called the minimum sum of absolute differences heuristic, suggested by the PNG standard:
@@ -5487,6 +5507,139 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
       }
     }
     for(type = 0; type != 5; ++type) free(attempt[type]);
+  }
+  else if(strategy == LFS_GENETIC_ALGORITHM)
+  {
+    /*Genetic algorithm filter finder. Attempts to find better filters through mutation and recombination.*/
+    unsigned char* dummy;
+    LodePNGCompressSettings zlibsettings = settings->zlibsettings;
+    zlibsettings.btype = 1;
+    zlibsettings.custom_zlib = 0;
+    zlibsettings.custom_deflate = 0;
+    const size_t population_size = settings->ga.population_size;
+    const size_t last = population_size - 1;
+    unsigned char* population = (unsigned char*)lodepng_malloc(h * population_size);
+    size_t* size = (size_t*)lodepng_malloc(population_size * sizeof(size_t));
+    unsigned* ranking = (unsigned*)lodepng_malloc(population_size * sizeof(int));
+    unsigned g, i, j, e, t, c, type, crossover1, crossover2, selection_size, size_sum;
+    unsigned char* parent1, *parent2, *child;
+    unsigned best_size = UINT_MAX;
+    unsigned total_size = 0;
+    unsigned e_since_best = 0;
+    unsigned tournament_size = 2;
+
+    /*evaluate initial population*/
+    memcpy(population, settings->predefined_filters, h * population_size);
+    for(g = 0; g <= last; ++g)
+    {
+      prevline = 0;
+      for(y = 0; y < h; ++y)
+      {
+        type = population[g * h + y];
+        out[y * (linebytes + 1)] = type;
+        filterScanline(&out[y * (linebytes + 1) + 1], &in[y * linebytes], prevline, linebytes, bytewidth, type);
+        prevline = &in[y * linebytes];
+      }
+      size[g] = 0;
+      dummy = 0;
+      zlib_compress(&dummy, &size[g], out, h * (linebytes + 1), &zlibsettings);
+      lodepng_free(dummy);
+      total_size += size[g];
+      ranking[g] = g;
+    }
+
+    for(e = 0; (settings->ga.number_of_generations == 0 || e < settings->ga.number_of_generations) && e_since_best < settings->ga.number_of_stagnations; ++e)
+    {
+      /*resort rankings*/
+      for(i = 1; i < population_size; ++i)
+      {
+        t = ranking[i];
+        for(j = i - 1; j + 1 > 0 && size[ranking[j]] > size[t]; --j) ranking[j + 1] = ranking[j];
+        ranking[j + 1] = t;
+      }
+      if(size[ranking[0]] < best_size)
+      {
+        best_size = size[ranking[0]];
+        e_since_best = 0;
+        if(settings->verbose) printf("Generation %d: %d bytes\n", e, best_size);
+      }
+      else ++e_since_best;
+
+      for(c = 0; c < settings->ga.number_of_offspring; ++c)
+      {
+        /*tournament selection*/
+        /*parent 1*/
+        selection_size = UINT_MAX;
+        for(t = 0; t < tournament_size; ++t) selection_size = std::min(unsigned(XORShift128PlusNorm(r) * total_size), selection_size);
+        size_sum = 0;
+        for(j = 0; size_sum <= selection_size; ++j) size_sum += size[ranking[j]];
+        parent1 = &population[ranking[j - 1] * h];
+
+        /*parent 2*/
+        selection_size = UINT_MAX;
+        for(t = 0; t < tournament_size; ++t) selection_size = std::min(unsigned(XORShift128PlusNorm(r) * total_size), selection_size);
+        size_sum = 0;
+        for(j = 0; size_sum <= selection_size; ++j) size_sum += size[ranking[j]];
+        parent2 = &population[ranking[j - 1] * h];
+
+        /*two-point crossover*/
+        child = &population[(ranking[last - c]) * h];
+        if(XORShift128PlusNorm(r) < settings->ga.crossover_probability)
+        {
+          crossover1 = XORShift128Plus(r) % h;
+          crossover2 = XORShift128Plus(r) % h;
+          if(crossover1 > crossover2)
+          {
+            crossover1 ^= crossover2;
+            crossover2 ^= crossover1;
+            crossover1 ^= crossover2;
+          }
+          if(child != parent1) {
+            memcpy(child, parent1, crossover1);
+            memcpy(&child[crossover2], &parent1[crossover2], h - crossover2);
+          }
+          if(child != parent2) memcpy(&child[crossover1], &parent2[crossover1], crossover2 - crossover1);
+        }
+        else if (XORShift128Plus(r) & 1) memcpy(child, parent1, h);
+        else memcpy(child, parent2, h);
+
+        /*mutation*/
+        for(y = 0; y < h; ++y)
+        {
+          if(XORShift128PlusNorm(r) < settings->ga.mutation_probability) child[y] = XORShift128Plus(r) % 5;
+        }
+
+        /*evaluate new genome*/
+        total_size -= size[ranking[last - c]];
+        prevline = 0;
+        for(y = 0; y < h; ++y)
+        {
+          type = child[y];
+          out[y * (linebytes + 1)] = type;
+          filterScanline(&out[y * (linebytes + 1) + 1], &in[y * linebytes], prevline, linebytes, bytewidth, type);
+          prevline = &in[y * linebytes];
+        }
+        size[ranking[last - c]] = 0;
+        dummy = 0;
+        zlib_compress(&dummy, &size[ranking[last - c]], out, h * (linebytes + 1), &zlibsettings);
+        lodepng_free(dummy);
+        total_size += size[ranking[last - c]];
+      }
+    }
+
+    /*final choice*/
+    prevline = 0;
+    for(y = 0; y < h; ++y)
+    {
+      type = population[ranking[0] * h + y];
+      out[y * (linebytes + 1)] = type;
+      filterScanline(&out[y * (linebytes + 1) + 1], &in[y * linebytes], prevline, linebytes, bytewidth, type);
+      prevline = &in[y * linebytes];
+    }
+
+    lodepng_free(population);
+    lodepng_free(size);
+    lodepng_free(ranking);
   }
   else return 88; /* unknown filter strategy */
 
