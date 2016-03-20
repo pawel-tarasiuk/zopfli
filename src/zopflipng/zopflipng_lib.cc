@@ -31,6 +31,16 @@
 #include "lodepng/lodepng_util.h"
 #include "../zopfli/deflate.h"
 
+/* __has_builtin available in clang */
+#ifdef __has_builtin
+# if __has_builtin(__builtin_ctz)
+#   define HAS_BUILTIN_CTZ
+# endif
+/* __builtin_ctz available beginning with GCC 3.4 */
+#elif __GNUC__ * 100 + __GNUC_MINOR__ >= 304
+# define HAS_BUILTIN_CTZ
+#endif
+
 ZopfliPNGOptions::ZopfliPNGOptions()
   : verbose(false)
   , lossy_transparent(0)
@@ -86,6 +96,9 @@ void CountColors(std::set<unsigned>* unique,
 
 // Way faster using CTZ intrinsic
 unsigned CountTrailingZeros(int x) {
+#ifdef HAS_BUILTIN_CTZ
+  return __builtin_ctz(x);
+#else
   if (x == 0) {
     return 32;
   } else {
@@ -111,6 +124,7 @@ unsigned CountTrailingZeros(int x) {
     }
     return n;
   }
+#endif
 }
 
 // Prepare image for PNG-32 to PNG-24(+tRNS) or PNG-8(+tRNS) reduction.
