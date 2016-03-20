@@ -95,7 +95,7 @@ struct ZopfliPNGOptions {
   bool verbose;
 
   // Allow altering hidden colors of fully transparent pixels
-  bool lossy_transparent;
+  int lossy_transparent;
   // Convert 16-bit per channel images to 8-bit per channel
   bool lossy_8bit;
 
@@ -114,6 +114,9 @@ struct ZopfliPNGOptions {
 
   // Zopfli number of iterations
   int num_iterations;
+
+  // Zopfli maximum number of Deflate blocks
+  int maxblocks;
 
   // Zopfli number of iterations on large images
   int num_iterations_large;
