@@ -67,6 +67,8 @@ typedef struct CZopfliPNGOptions {
   int num_iterations_large;
 
   int block_split_strategy;
+  
+  int max_blocks;
 } CZopfliPNGOptions;
 
 // Sets the default options
@@ -96,6 +98,7 @@ struct ZopfliPNGOptions {
 
   // Allow altering hidden colors of fully transparent pixels
   int lossy_transparent;
+
   // Convert 16-bit per channel images to 8-bit per channel
   bool lossy_8bit;
 
@@ -115,14 +118,14 @@ struct ZopfliPNGOptions {
   // Zopfli number of iterations
   int num_iterations;
 
-  // Zopfli maximum number of Deflate blocks
-  int maxblocks;
-
   // Zopfli number of iterations on large images
   int num_iterations_large;
 
   // Unused, left for backwards compatiblity.
   int block_split_strategy;
+
+  // Zopfli maximum number of Deflate blocks
+  int max_blocks;
 };
 
 // Returns 0 on success, error code otherwise.

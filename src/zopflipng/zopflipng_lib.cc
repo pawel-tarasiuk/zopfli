@@ -48,7 +48,7 @@ ZopfliPNGOptions::ZopfliPNGOptions()
   , auto_filter_strategy(true)
   , use_zopfli(true)
   , num_iterations(15)
-  , maxblocks(15)
+  , max_blocks(15)
   , num_iterations_large(5)
   , block_split_strategy(1) {
 }
@@ -65,7 +65,7 @@ unsigned CustomPNGDeflate(unsigned char** out, size_t* outsize,
   ZopfliInitOptions(&options);
 
   options.verbose = png_options->verbose;
-  options.blocksplittingmax = png_options->maxblocks;
+  options.blocksplittingmax = png_options->max_blocks;
   options.numiterations = insize < 200000
       ? png_options->num_iterations : png_options->num_iterations_large;
 
@@ -962,6 +962,7 @@ extern "C" void CZopfliPNGSetDefaults(CZopfliPNGOptions* png_options) {
   png_options->num_iterations       = opts.num_iterations;
   png_options->num_iterations_large = opts.num_iterations_large;
   png_options->block_split_strategy = opts.block_split_strategy;
+  png_options->max_blocks           = opts.max_blocks;
 }
 
 extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
@@ -980,6 +981,7 @@ extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
   opts.num_iterations       = png_options->num_iterations;
   opts.num_iterations_large = png_options->num_iterations_large;
   opts.block_split_strategy = png_options->block_split_strategy;
+  opts.max_blocks           = png_options->max_blocks;
 
   for (int i = 0; i < png_options->num_filter_strategies; i++) {
     opts.filter_strategies.push_back(png_options->filter_strategies[i]);

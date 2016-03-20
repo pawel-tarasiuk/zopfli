@@ -204,7 +204,7 @@ int main(int argc, char *argv[]) {
         png_options.num_iterations_large = num;
       } else if (name == "--maxblocks") {
         if (num < 0) num = 1;
-        png_options.maxblocks = num;
+        png_options.max_blocks = num;
       } else if (name == "--splitting") {
         // ignored
       } else if (name == "--filters") {
