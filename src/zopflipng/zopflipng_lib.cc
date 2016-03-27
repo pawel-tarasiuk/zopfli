@@ -40,6 +40,7 @@ ZopfliPNGOptions::ZopfliPNGOptions()
   , num_iterations_large(5)
   , block_split_strategy(1)
   , max_blocks(15)
+  , num_stagnations(15)
   , ga_population_size(19)
   , ga_max_evaluations(0)
   , ga_stagnate_evaluations(15)
@@ -63,6 +64,7 @@ unsigned CustomPNGDeflate(unsigned char** out, size_t* outsize,
   options.numiterations = insize < 200000
       ? png_options->num_iterations : png_options->num_iterations_large;
   options.blocksplittingmax = png_options->max_blocks;
+  options.numstagnations = png_options->num_stagnations;
 
   ZopfliDeflate(&options, 2 /* Dynamic */, 1, in, insize, &bp, out, outsize);
 
@@ -517,6 +519,7 @@ extern "C" void CZopfliPNGSetDefaults(CZopfliPNGOptions* png_options) {
   png_options->num_iterations_large     = opts.num_iterations_large;
   png_options->block_split_strategy     = opts.block_split_strategy;
   png_options->max_blocks               = opts.max_blocks;
+  png_options->num_stagnations          = opts.num_stagnations;
   png_options->ga_population_size       = opts.ga_population_size;
   png_options->ga_max_evaluations       = opts.ga_max_evaluations;
   png_options->ga_stagnate_evaluations  = opts.ga_stagnate_evaluations;
@@ -542,6 +545,7 @@ extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
   opts.num_iterations_large     = png_options->num_iterations_large;
   opts.block_split_strategy     = png_options->block_split_strategy;
   opts.max_blocks               = png_options->max_blocks;
+  opts.num_stagnations          = png_options->num_stagnations;
   opts.ga_population_size       = png_options->ga_population_size;
   opts.ga_max_evaluations       = png_options->ga_max_evaluations;
   opts.ga_stagnate_evaluations  = png_options->ga_stagnate_evaluations;

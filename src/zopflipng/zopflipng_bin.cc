@@ -90,8 +90,10 @@ void ShowHelp() {
          "-q: use quick, but not very good, compression"
          " (e.g. for only trying the PNG filter and color types)\n"
          "--iterations=[number]: number of iterations, more iterations makes it"
-         " slower but provides slightly better compression. Default: 15 for"
-         " small files, 5 for large files.\n"
+         " slower but provides slightly better compression (0 for unlimited)."
+         " Default: 15 for small files, 5 for large files.\n"
+         "--stagnate_iterations=[number]: number of sequential iterations"
+         " without improvement. Default: 15\n"
          "--max_blocks=[number]: maximum amount of blocks to split into (0 for"
          " unlimited, but this can give extreme results that hurt compression"
          " on some files). Default: 15\n"
@@ -205,9 +207,12 @@ int main(int argc, char *argv[]) {
       } else if (name == "--lossy_8bit") {
         png_options.lossy_8bit = true;
       } else if (name == "--iterations") {
-        if (num < 1) num = 1;
+        if (num < 0) num = 0;
         png_options.num_iterations = num;
         png_options.num_iterations_large = num;
+      } else if (name == "--stagnate_iterations") {
+        if (num < 1) num = 1;
+        png_options.num_stagnations = num;
       } else if (name == "--max_blocks") {
         if (num < 0) num = 0;
         png_options.max_blocks = num;

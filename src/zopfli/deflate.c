@@ -782,7 +782,8 @@ void ZopfliDeflatePart(const ZopfliOptions* options, int btype, int final,
     ZopfliLZ77Store store;
     ZopfliInitLZ77Store(in, &store);
     ZopfliInitBlockState(options, start, end, 1, &s);
-    ZopfliLZ77Optimal(&s, in, start, end, options->numiterations, &store);
+    ZopfliLZ77Optimal(&s, in, start, end, options->numiterations,
+                      options->numstagnations, &store);
     totalcost += ZopfliCalculateBlockSizeAutoType(&store, 0, store.size);
 
     ZopfliAppendLZ77Store(&store, &lz77);

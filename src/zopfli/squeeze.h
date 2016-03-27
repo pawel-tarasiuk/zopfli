@@ -40,7 +40,7 @@ dictionary.
 */
 void ZopfliLZ77Optimal(ZopfliBlockState *s,
                        const unsigned char* in, size_t instart, size_t inend,
-                       int numiterations,
+                       int numiterations, int numstagnations,
                        ZopfliLZ77Store* store);
 
 /*

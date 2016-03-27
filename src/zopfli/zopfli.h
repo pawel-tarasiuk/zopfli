@@ -61,6 +61,12 @@ typedef struct ZopfliOptions {
   extreme results that hurt compression on some files). Default value: 15.
   */
   int blocksplittingmax;
+
+  /*
+  Maximum amount of times to rerun forward and backward pass to optimize LZ77
+  compression cost without improvement.
+  */
+  int numstagnations;
 } ZopfliOptions;
 
 /* Initializes options with default values. */

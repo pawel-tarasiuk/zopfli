@@ -75,6 +75,8 @@ typedef struct CZopfliPNGOptions {
 
   int max_blocks;
 
+  int num_stagnations;
+
   int ga_population_size;
 
   int ga_max_evaluations;
@@ -142,6 +144,9 @@ struct ZopfliPNGOptions {
 
   // Zopfli maximum number of deflate blocks to split into
   int max_blocks;
+
+  // Zopfli number of sequential iterations without improvement
+  int num_stagnations;
 
   // Genetic algorithm: number of genomes in pool
   int ga_population_size;

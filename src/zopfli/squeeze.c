@@ -450,7 +450,7 @@ static double LZ77OptimalRun(ZopfliBlockState* s,
 
 void ZopfliLZ77Optimal(ZopfliBlockState *s,
                        const unsigned char* in, size_t instart, size_t inend,
-                       int numiterations,
+                       int numiterations, int numstagnations,
                        ZopfliLZ77Store* store) {
   /* Dist to get to here with smallest cost. */
   size_t blocksize = inend - instart;
@@ -464,6 +464,7 @@ void ZopfliLZ77Optimal(ZopfliBlockState *s,
   double cost;
   double bestcost = ZOPFLI_LARGE_FLOAT;
   double lastcost = 0;
+  int i_since_best = 0;
   /* Try randomizing the costs a bit once the size stabilizes. */
   RanState ran_state;
   int lastrandomstep = -1;
@@ -483,7 +484,8 @@ void ZopfliLZ77Optimal(ZopfliBlockState *s,
 
   /* Repeat statistics with each time the cost model from the previous stat
   run. */
-  for (i = 0; i < numiterations; i++) {
+  for (i = 0; (numiterations == 0 || i < numiterations)
+               && i_since_best < numstagnations; i++) {
     ZopfliCleanLZ77Store(&currentstore);
     ZopfliInitLZ77Store(in, &currentstore);
     LZ77OptimalRun(s, in, instart, inend, &path, &pathsize,
@@ -498,7 +500,9 @@ void ZopfliLZ77Optimal(ZopfliBlockState *s,
       ZopfliCopyLZ77Store(&currentstore, store);
       CopyStats(&stats, &beststats);
       bestcost = cost;
+      i_since_best = 0;
     }
+    else ++i_since_best;
     CopyStats(&stats, &laststats);
     ClearStatFreqs(&stats);
     GetStatistics(&currentstore, &stats);
