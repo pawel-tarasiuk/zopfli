@@ -168,7 +168,7 @@ void LossyOptimizeTransparent(lodepng::State* inputstate, unsigned char* image,
 // Returns 0 if ok, other value for error
 unsigned TryOptimize(
     const std::vector<unsigned char>& image, unsigned w, unsigned h,
-    const lodepng::State& inputstate, bool bit16,
+    const lodepng::State& inputstate, bool bit16, bool keep_colortype,
     const std::vector<unsigned char>& origfile,
     ZopfliPNGFilterStrategy filterstrategy,
     bool use_zopfli, int windowsize, const ZopfliPNGOptions* png_options,
@@ -183,6 +183,10 @@ unsigned TryOptimize(
     state.encoder.zlibsettings.custom_context = png_options;
   }
 
+  if (keep_colortype) {
+    state.encoder.auto_convert = 0;
+    lodepng_color_mode_copy(&state.info_png.color, &inputstate.info_png.color);
+  }
   if (inputstate.info_png.color.colortype == LCT_PALETTE) {
     // Make it preserve the original palette order
     lodepng_color_mode_copy(&state.info_raw, &inputstate.info_png.color);
@@ -244,7 +248,7 @@ unsigned TryOptimize(
       break;
     case kStrategyPredefined:
       lodepng::getFilterTypes(filters, origfile);
-      if (filters.size() != h) return 1; // Error getting filters
+      if (filters.size() != h) return 1;  // Error getting filters
       state.encoder.filter_strategy = LFS_PREDEFINED;
       state.encoder.predefined_filters = &filters[0];
       break;
@@ -261,7 +265,7 @@ unsigned TryOptimize(
 
   // For very small output, also try without palette, it may be smaller thanks
   // to no palette storage overhead.
-  if (!error && out->size() < 4096) {
+  if (!error && out->size() < 4096 && !keep_colortype) {
     lodepng::State teststate;
     std::vector<unsigned char> temp;
     lodepng::decode(temp, w, h, teststate, *out);
@@ -315,7 +319,8 @@ static uint64_t XORShift128Plus(uint64_t* s) {
 // filter type.
 unsigned AutoChooseFilterStrategy(const std::vector<unsigned char>& image,
                                   unsigned w, unsigned h,
-                                  const lodepng::State& inputstate, bool bit16,
+                                  const lodepng::State& inputstate,
+                                  bool bit16, bool keep_colortype,
                                   const std::vector<unsigned char>& origfile,
                                   int numstrategies,
                                   ZopfliPNGFilterStrategy* strategies,
@@ -346,8 +351,8 @@ unsigned AutoChooseFilterStrategy(const std::vector<unsigned char>& image,
 
   for (int i = 0; i < numstrategies; i++) {
     out.clear();
-    unsigned error = TryOptimize(image, w, h, inputstate, bit16, origfile,
-                                 strategies[i], false, windowsize, png_options,
+    unsigned error = TryOptimize(image, w, h, inputstate, bit16, keep_colortype,
+                                 origfile, strategies[i], false, windowsize, 0,
                                  &out, &filterbank[0]);
     if (error) return error;
     if (png_options->verbose) {
@@ -363,14 +368,35 @@ unsigned AutoChooseFilterStrategy(const std::vector<unsigned char>& image,
   }
 
   out.clear();
-  unsigned error = TryOptimize(image, w, h, inputstate, bit16, origfile,
-                               kNumFilterStrategies
-                               /* trigger precalculated default path */,
+  unsigned error = TryOptimize(image, w, h, inputstate, bit16, keep_colortype,
+                               origfile, kNumFilterStrategies /* trigger
+                               precalculated default path */,
                                true /* use_zopfli */, windowsize, png_options,
                                &out, &filterbank[bestfilter * h]);
   (*resultpng).swap(out);
 
   return error;
+}
+
+// Outputs the intersection of keepnames and non-essential chunks which are in
+// the PNG image.
+void ChunksToKeep(const std::vector<unsigned char>& origpng,
+                  const std::vector<std::string>& keepnames,
+                  std::set<std::string>* result) {
+  std::vector<std::string> names[3];
+  std::vector<std::vector<unsigned char> > chunks[3];
+
+  lodepng::getChunks(names, chunks, origpng);
+
+  for (size_t i = 0; i < 3; i++) {
+    for (size_t j = 0; j < names[i].size(); j++) {
+      for (size_t k = 0; k < keepnames.size(); k++) {
+        if (keepnames[k] == names[i][j]) {
+          result->insert(names[i][j]);
+        }
+      }
+    }
+  }
 }
 
 // Keeps chunks with given names from the original png by literally copying them
@@ -432,6 +458,20 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
   lodepng::State inputstate;
   error = lodepng::decode(image, w, h, inputstate, origpng);
 
+  // If the user wants to keep the non-essential chunks bKGD or sBIT, the input
+  // color type has to be kept since the chunks format depend on it. This may
+  // severely hurt compression if it is not an ideal color type. Ideally these
+  // chunks should not be kept for web images. Handling of bKGD chunks could be
+  // improved by changing its color type but not done yet due to its additional
+  // complexity, for sBIT such improvement is usually not possible.
+  std::set<std::string> keepchunks;
+  ChunksToKeep(origpng, png_options.keepchunks, &keepchunks);
+  bool keep_colortype = keepchunks.count("bKGD") || keepchunks.count("sBIT");
+  if (keep_colortype && verbose) {
+    printf("Forced to keep original color type due to keeping bKGD or sBIT"
+           " chunk.\n");
+  }
+
   if (error) {
     if (verbose) {
       if (error == 1) {
@@ -444,7 +484,8 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
   }
 
   bool bit16 = false;  // Using 16-bit per channel raw image
-  if (inputstate.info_png.color.bitdepth == 16 && !png_options.lossy_8bit) {
+  if (inputstate.info_png.color.bitdepth == 16 &&
+      (keep_colortype || !png_options.lossy_8bit)) {
     // Decode as 16-bit
     image.clear();
     error = lodepng::decode(image, w, h, origpng, LCT_RGBA, 16);
@@ -458,7 +499,8 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     }
 
     if (png_options.auto_filter_strategy) {
-      error = AutoChooseFilterStrategy(image, w, h, inputstate, bit16, origpng,
+      error = AutoChooseFilterStrategy(image, w, h, inputstate, bit16,
+                                       keep_colortype, origpng,
                                        kNumFilterStrategies, filterstrategies,
                                        &png_options, resultpng);
     } else {
@@ -477,8 +519,8 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
         if (!strategy_enable[i]) continue;
 
         std::vector<unsigned char> temp;
-        error = TryOptimize(image, w, h, inputstate, bit16, origpng,
-                            filterstrategies[i], true /* use_zopfli */,
+        error = TryOptimize(image, w, h, inputstate, bit16, keep_colortype,
+                            origpng, filterstrategies[i], true /* use_zopfli */,
                             windowsize, &png_options, &temp, &filterbank[0]);
         if (!error) {
           if (verbose) {

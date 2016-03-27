@@ -21,6 +21,7 @@
 #include <stdio.h>
 
 #include "lodepng/lodepng.h"
+#include "lodepng/lodepng_util.h"
 #include "zopflipng_lib.h"
 
 // Returns directory path (including last slash) in dir, filename without
@@ -47,7 +48,17 @@ void GetFileNameParts(const std::string& filename,
   }
 }
 
-// Returns the size of the file
+// Returns whether the file exists and we have read permissions.
+bool FileExists(const std::string& filename) {
+  FILE* file = fopen(filename.c_str(), "rb");
+  if (file) {
+    fclose(file);
+    return true;
+  }
+  return false;
+}
+
+// Returns the size of the file, if it exists and we have read permissions.
 size_t GetFileSize(const std::string& filename) {
   size_t size;
   FILE* file = fopen(filename.c_str(), "rb");
@@ -117,9 +128,12 @@ void ShowHelp() {
          " set of filters to try is --filters=0me.\n"
          "--keepchunks=nAME,nAME,...: keep metadata chunks with these names"
          " that would normally be removed, e.g. tEXt,zTXt,iTXt,gAMA, ... \n"
-         " Due to adding extra data, this increases the result size. By default"
-         " ZopfliPNG only keeps the following chunks because they are"
-         " essential: IHDR, PLTE, tRNS, IDAT and IEND.\n"
+         " Due to adding extra data, this increases the result size. Keeping"
+         " bKGD or sBIT chunks may cause additional worse compression due to"
+         " forcing a certain color type, it is advised to not keep these for"
+         " web images because web browsers do not use these chunks. By default"
+         " ZopfliPNG only keeps (and losslessly modifies) the following chunks"
+         " because they are essential: IHDR, PLTE, tRNS, IDAT and IEND.\n"
          "\n"
          "*Genetic algorithm filter options:\n"
          "--ga_population_size: number of genomes in pool. Default: 19\n"
@@ -336,9 +350,11 @@ int main(int argc, char *argv[]) {
     lodepng::State inputstate;
     std::vector<unsigned char> resultpng;
 
-    lodepng::load_file(origpng, files[i]);
-    error = ZopfliPNGOptimize(origpng, png_options,
-                              png_options.verbose, &resultpng);
+    error = lodepng::load_file(origpng, files[i]);
+    if (!error) {
+      error = ZopfliPNGOptimize(origpng, png_options,
+                                png_options.verbose, &resultpng);
+    }
 
     if (error) {
       if (error == 1) {
@@ -351,15 +367,33 @@ int main(int argc, char *argv[]) {
     // Verify result, check that the result causes no decoding errors
     if (!error) {
       error = lodepng::decode(image, w, h, inputstate, resultpng);
-      if (error) printf("Error: verification of result failed.\n");
+      if (error) {
+        printf("Error: verification of result failed. Error: %u.\n", error);
+      }
     }
 
     if (error) {
       total_errors++;
     } else {
-      size_t origsize = GetFileSize(files[i]);
+      size_t origsize = origpng.size();
       size_t resultsize = resultpng.size();
 
+      if (!png_options.keepchunks.empty()) {
+        std::vector<std::string> names;
+        std::vector<size_t> sizes;
+        lodepng::getChunkInfo(names, sizes, resultpng);
+        for (size_t i = 0; i < names.size(); i++) {
+          if (names[i] == "bKGD" || names[i] == "sBIT") {
+            printf("Forced to keep original color type due to keeping bKGD or"
+                   " sBIT chunk. Try without --keepchunks for better"
+                   " compression.\n");
+            break;
+          }
+        }
+      }
+
+      PrintSize("Input size", origsize);
+      PrintResultSize("Result size", origsize, resultsize);
       if (resultsize < origsize) {
         printf("Result is smaller\n");
       } else if (resultsize == origsize) {
@@ -369,8 +403,6 @@ int main(int argc, char *argv[]) {
             ? "Original was smaller\n"
             : "Preserving original PNG since it was smaller\n");
       }
-      PrintSize("Input size", origsize);
-      PrintResultSize("Result size", origsize, resultsize);
 
       std::string out_filename = user_out_filename;
       if (use_prefix) {
@@ -385,28 +417,29 @@ int main(int argc, char *argv[]) {
       if (resultpng.size() < origsize) total_files_smaller++;
       else if (resultpng.size() == origsize) total_files_equal++;
 
-      if (!always_zopflify && resultpng.size() > origsize) {
-        // Set output file to input since input was smaller.
+      if (!always_zopflify && resultpng.size() >= origsize) {
+        // Set output file to input since zopfli didn't improve it.
         resultpng = origpng;
       }
 
+      bool already_exists = FileExists(out_filename);
       size_t origoutfilesize = GetFileSize(out_filename);
-      bool already_exists = true;
-      if (origoutfilesize == 0) already_exists = false;
 
       // When using a prefix, and the output file already exist, assume it's
       // from a previous run. If that file is smaller, it may represent a
       // previous run with different parameters that gave a smaller PNG image.
+      // This also applies when not using prefix but same input as output file.
       // In that case, do not overwrite it. This behaviour can be removed by
       // adding the always_zopflify flag.
       bool keep_earlier_output_file = already_exists &&
-          resultpng.size() >= origoutfilesize && !always_zopflify && use_prefix;
+          resultpng.size() >= origoutfilesize && !always_zopflify &&
+          (use_prefix || !different_output_name);
 
       if (keep_earlier_output_file) {
         // An output file from a previous run is kept, add that files' size
         // to the output size statistics.
         total_out_size += origoutfilesize;
-        if (different_output_name) {
+        if (use_prefix) {
           printf(resultpng.size() == origoutfilesize
               ? "File not written because a previous run was as good.\n"
               : "File not written because a previous run was better.\n");
@@ -425,8 +458,11 @@ int main(int argc, char *argv[]) {
         }
         if (confirmed) {
           if (!dryrun) {
-            lodepng::save_file(resultpng, out_filename);
-            total_files_saved++;
+            if (lodepng::save_file(resultpng, out_filename) != 0) {
+              printf("Failed to write to file %s\n", out_filename.c_str());
+            } else {
+              total_files_saved++;
+            }
           }
           total_out_size += resultpng.size();
         } else {
