@@ -352,8 +352,8 @@ unsigned AutoChooseFilterStrategy(const std::vector<unsigned char>& image,
   for (int i = 0; i < numstrategies; i++) {
     out.clear();
     unsigned error = TryOptimize(image, w, h, inputstate, bit16, keep_colortype,
-                                 origfile, strategies[i], false, windowsize, 0,
-                                 &out, &filterbank[0]);
+                                 origfile, strategies[i], false, windowsize,
+                                 png_options, &out, &filterbank[0]);
     if (error) return error;
     if (png_options->verbose) {
       printf("Filter strategy %s: %d bytes\n",
