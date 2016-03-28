@@ -5420,13 +5420,7 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
     unsigned type = 0, bestType = 0;
     unsigned char* dummy;
     LodePNGCompressSettings zlibsettings = settings->zlibsettings;
-    /*use fixed tree on the attempts so that the tree is not adapted to the filtertype on purpose,
-    to simulate the true case where the tree is the same for the whole image. Sometimes it gives
-    better result with dynamic tree anyway. Using the fixed tree sometimes gives worse, but in rare
-    cases better compression. It does make this a bit less slow, so it's worth doing this.*/
-    zlibsettings.btype = 1;
-    /*a custom encoder likely doesn't read the btype setting and is optimized for complete PNG
-    images only, so disable it*/
+    /*disable custom encoder for speed -- just get an estimate*/
     zlibsettings.custom_zlib = 0;
     zlibsettings.custom_deflate = 0;
     for(type = 0; type != 5; ++type)
@@ -5457,7 +5451,7 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
       out[y * (linebytes + 1)] = bestType; /*the first byte of a scanline will be the filter type*/
       for(x = 0; x != linebytes; ++x) out[y * (linebytes + 1) + 1 + x] = attempt[bestType][x];
     }
-    for(type = 0; type != 5; ++type) free(attempt[type]);
+    for(type = 0; type != 5; ++type) lodepng_free(attempt[type]);
   }
   else if(strategy == LFS_INCREMENTAL)
   {
@@ -5470,7 +5464,7 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
     unsigned type, bestType = 0;
     unsigned char* dummy;
     LodePNGCompressSettings zlibsettings = settings->zlibsettings;
-    zlibsettings.btype = 1;
+    /*disable custom encoder for speed -- just get an estimate*/
     zlibsettings.custom_zlib = 0;
     zlibsettings.custom_deflate = 0;
     for(type = 0; type != 5; ++type)
@@ -5506,14 +5500,14 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
         for(x = 0; x != linebytes; ++x) out[y * (linebytes + 1) + 1 + x] = attempt[bestType][x];
       }
     }
-    for(type = 0; type != 5; ++type) free(attempt[type]);
+    for(type = 0; type != 5; ++type) lodepng_free(attempt[type]);
   }
   else if(strategy == LFS_GENETIC_ALGORITHM)
   {
     /*Genetic algorithm filter finder. Attempts to find better filters through mutation and recombination.*/
     unsigned char* dummy;
     LodePNGCompressSettings zlibsettings = settings->zlibsettings;
-    zlibsettings.btype = 1;
+    /*disable custom encoder for speed -- just get an estimate*/
     zlibsettings.custom_zlib = 0;
     zlibsettings.custom_deflate = 0;
     const size_t population_size = settings->ga.population_size;
@@ -5600,7 +5594,7 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
           }
           if(child != parent2) memcpy(&child[crossover1], &parent2[crossover1], crossover2 - crossover1);
         }
-        else if (XORShift128Plus(r) & 1) memcpy(child, parent1, h);
+        else if(XORShift128Plus(r) & 1) memcpy(child, parent1, h);
         else memcpy(child, parent2, h);
 
         /*mutation*/

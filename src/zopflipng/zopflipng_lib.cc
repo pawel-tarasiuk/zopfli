@@ -178,6 +178,8 @@ unsigned TryOptimize(
   lodepng::State state;
   state.encoder.verbose = png_options->verbose;
   state.encoder.zlibsettings.windowsize = windowsize;
+  state.encoder.zlibsettings.nicematch = 258;
+
   if (use_zopfli && png_options->use_zopfli) {
     state.encoder.zlibsettings.custom_deflate = CustomPNGDeflate;
     state.encoder.zlibsettings.custom_context = png_options;
