@@ -89,8 +89,8 @@ void ShowHelp() {
          " considered as output from previous runs. This is handy when using"
          " *.png wildcard expansion with multiple runs.\n"
          "-y: do not ask about overwriting files.\n"
-         "--lossy_transparent: remove colors behind alpha channel 0. No visual"
-         " difference, removes hidden information.\n"
+         "--alpha_cleaner=[0-4]: remove colors behind alpha channel 0. No visual"
+         " difference, removes hidden information, based on cryopng.\n"
          "--lossy_8bit: convert 16-bit per channel image to 8-bit per"
          " channel.\n"
          "-d: dry run: don't save any files, just see the console output"
@@ -155,7 +155,7 @@ void ShowHelp() {
          "Optimize multiple files: zopflipng --prefix a.png b.png c.png\n"
          "Compress really good and trying all filter strategies: zopflipng"
          " --iterations=500 --filters=01234mywepbig --lossy_8bit"
-         " --lossy_transparent infile.png outfile.png\n");
+         " --alpha_cleaner=01234 infile.png outfile.png\n");
 }
 
 void PrintSize(const char* label, size_t size) {
@@ -216,8 +216,20 @@ int main(int argc, char *argv[]) {
         always_zopflify = true;
       } else if (name == "--verbose") {
         png_options.verbose = true;
-      } else if (name == "--lossy_transparent") {
-        png_options.lossy_transparent = true;
+      } else if (name == "--alpha_cleaner") {
+        for (size_t j = 0; j < value.size(); j++) {
+          char f = value[j];
+          switch (f) {
+            case '0': png_options.lossy_transparent |= 1; break;
+            case '1': png_options.lossy_transparent |= 2; break;
+            case '2': png_options.lossy_transparent |= 4; break;
+            case '3': png_options.lossy_transparent |= 8; break;
+            case '4': png_options.lossy_transparent |= 16; break;
+            default:
+              printf("Unknown alpha cleaning method: %c\n", f);
+              return 1;
+          }
+        }
       } else if (name == "--lossy_8bit") {
         png_options.lossy_8bit = true;
       } else if (name == "--iterations") {
@@ -373,6 +385,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (error) {
+      printf("There was an error\n");
       total_errors++;
     } else {
       size_t origsize = origpng.size();
