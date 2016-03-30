@@ -126,6 +126,8 @@ void ShowHelp() {
          " If this argument is used, all given filter types"
          " are tried with slow compression and the best result retained. A good"
          " set of filters to try is --filters=0me.\n"
+         "--zopfli_filters: use zopfli when testing filter strategies rather"
+         " than estimating with faster deflate algorithm\n"
          "--keepchunks=nAME,nAME,...: keep metadata chunks with these names"
          " that would normally be removed, e.g. tEXt,zTXt,iTXt,gAMA, ... \n"
          " Due to adding extra data, this increases the result size. Keeping"
@@ -269,8 +271,9 @@ int main(int argc, char *argv[]) {
           png_options.filter_strategies.push_back(strategy);
           // Enable auto filter strategy only if no user-specified filter is
           // given.
-          png_options.auto_filter_strategy = false;
         }
+      } else if (name == "--zopfli_filters") {
+          png_options.auto_filter_strategy = false;
       } else if (name == "--keepchunks") {
         bool correct = true;
         if ((value.size() + 1) % 5 != 0) correct = false;
