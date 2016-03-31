@@ -5521,7 +5521,6 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
     unsigned total_size = 0;
     unsigned e_since_best = 0;
     unsigned tournament_size = 2;
-
     /* for very small images, try every combination instead of genetic algorithm */
     if(h * flog2(5) < flog2(population_size * settings->ga.number_of_stagnations))
     {
@@ -5554,7 +5553,6 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
       }
       ranking[0] = 0;
     }
-
     else
     {
       /*evaluate initial population*/
@@ -5576,7 +5574,6 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
         total_size += size[g];
         ranking[g] = g;
       }
-
       for(e = 0; (settings->ga.number_of_generations == 0 || e < settings->ga.number_of_generations) && e_since_best < settings->ga.number_of_stagnations; ++e)
       {
         /*resort rankings*/
@@ -5593,7 +5590,7 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
           if(settings->verbose) printf("Generation %d: %d bytes\n", e, best_size);
         }
         else ++e_since_best;
-
+        /*generate offspring*/
         for(c = 0; c < settings->ga.number_of_offspring; ++c)
         {
           /*tournament selection*/
@@ -5603,14 +5600,12 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
           size_sum = 0;
           for(j = 0; size_sum <= selection_size; ++j) size_sum += size[ranking[j]];
           parent1 = &population[ranking[j - 1] * h];
-
           /*parent 2*/
           selection_size = UINT_MAX;
           for(t = 0; t < tournament_size; ++t) selection_size = std::min(unsigned(XORShift128PlusNorm(r) * total_size), selection_size);
           size_sum = 0;
           for(j = 0; size_sum <= selection_size; ++j) size_sum += size[ranking[j]];
           parent2 = &population[ranking[j - 1] * h];
-
           /*two-point crossover*/
           child = &population[(ranking[last - c]) * h];
           if(XORShift128PlusNorm(r) < settings->ga.crossover_probability)
@@ -5623,7 +5618,8 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
               crossover2 ^= crossover1;
               crossover1 ^= crossover2;
             }
-            if(child != parent1) {
+            if(child != parent1)
+            {
               memcpy(child, parent1, crossover1);
               memcpy(&child[crossover2], &parent1[crossover2], h - crossover2);
             }
@@ -5631,13 +5627,11 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
           }
           else if(XORShift128Plus(r) & 1) memcpy(child, parent1, h);
           else memcpy(child, parent2, h);
-
           /*mutation*/
           for(y = 0; y < h; ++y)
           {
             if(XORShift128PlusNorm(r) < settings->ga.mutation_probability) child[y] = XORShift128Plus(r) % 5;
           }
-
           /*evaluate new genome*/
           total_size -= size[ranking[last - c]];
           prevline = 0;
@@ -5656,7 +5650,6 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
         }
       }
     }
-
     /*final choice*/
     prevline = 0;
     for(y = 0; y < h; ++y)
@@ -5666,7 +5659,6 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
       filterScanline(&out[y * (linebytes + 1) + 1], &in[y * linebytes], prevline, linebytes, bytewidth, type);
       prevline = &in[y * linebytes];
     }
-
     lodepng_free(population);
     lodepng_free(size);
     lodepng_free(ranking);

@@ -89,7 +89,7 @@ void ShowHelp() {
          " considered as output from previous runs. This is handy when using"
          " *.png wildcard expansion with multiple runs.\n"
          "-y: do not ask about overwriting files.\n"
-         "--alpha_cleaner=[0-4]: remove colors behind alpha channel 0. No visual"
+         "--alpha_cleaner=[0-5]: remove colors behind alpha channel 0. No visual"
          " difference, removes hidden information, based on cryopng.\n"
          "--lossy_8bit: convert 16-bit per channel image to 8-bit per"
          " channel.\n"
@@ -115,10 +115,10 @@ void ShowHelp() {
          " y: distinct bytes\n"
          " w: distinct byte pairs\n"
          " e: entropy\n"
-         " p: predefined (keep from input, this likely overlaps another"
-         " strategy)\n"
          " b: brute force (slow)\n"
          " i: incremental brute force (very slow)\n"
+         " p: predefined (keep from input, this likely overlaps another"
+         " strategy)\n"
          " g: genetic algorithm*\n"
          " By default, if this argument is not given, one that is most likely"
          " the best for this image is chosen by trying faster compression with"
@@ -220,16 +220,12 @@ int main(int argc, char *argv[]) {
         png_options.verbose = true;
       } else if (name == "--alpha_cleaner") {
         for (size_t j = 0; j < value.size(); j++) {
-          char f = value[j];
-          switch (f) {
-            case '0': png_options.lossy_transparent |= 1; break;
-            case '1': png_options.lossy_transparent |= 2; break;
-            case '2': png_options.lossy_transparent |= 4; break;
-            case '3': png_options.lossy_transparent |= 8; break;
-            case '4': png_options.lossy_transparent |= 16; break;
-            default:
-              printf("Unknown alpha cleaning method: %c\n", f);
-              return 1;
+          char f = value[j] - '0';
+          if (f >= 0 && f <= 5) {
+            png_options.lossy_transparent |= (1 << f);
+          } else {
+            printf("Unknown alpha cleaning method: %i\n", f);
+            return 1;
           }
         }
       } else if (name == "--lossy_8bit") {
@@ -260,9 +256,9 @@ int main(int argc, char *argv[]) {
             case 'y': strategy = kStrategyDistinctBytes; break;
             case 'w': strategy = kStrategyDistinctBigrams; break;
             case 'e': strategy = kStrategyEntropy; break;
-            case 'p': strategy = kStrategyPredefined; break;
             case 'b': strategy = kStrategyBruteForce; break;
             case 'i': strategy = kStrategyIncremental; break;
+            case 'p': strategy = kStrategyPredefined; break;
             case 'g': strategy = kStrategyGeneticAlgorithm; break;
             default:
               printf("Unknown filter strategy: %c\n", f);

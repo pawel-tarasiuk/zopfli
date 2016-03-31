@@ -588,21 +588,23 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
   ZopfliPNGFilterStrategy filterstrategies[kNumFilterStrategies] = {
     kStrategyZero, kStrategyOne, kStrategyTwo, kStrategyThree, kStrategyFour,
     kStrategyMinSum, kStrategyDistinctBytes, kStrategyDistinctBigrams,
-    kStrategyEntropy, kStrategyPredefined, kStrategyBruteForce,
-    kStrategyIncremental, kStrategyGeneticAlgorithm
+    kStrategyEntropy, kStrategyBruteForce, kStrategyIncremental,
+    kStrategyPredefined, kStrategyGeneticAlgorithm
   };
   std::string strategy_name[kNumFilterStrategies] = {
-    "zero", "one", "two", "three", "four",
-    "minimum sum", "distinct bytes", "distinct bigrams", "entropy",
-    "predefined", "brute force", "incremental brute force", "genetic algorithm"
+    "zero", "one", "two", "three", "four", "minimum sum", "distinct bytes",
+    "distinct bigrams", "entropy", "brute force", "incremental brute force",
+    "predefined", "genetic algorithm"
   };
+  const int pre_predefined = 10;
   unsigned strategy_enable = 0;
   if (png_options.filter_strategies.empty()) {
     strategy_enable = (1 << kNumFilterStrategies) - 1;
   }
   else {
     for (size_t i = 0; i < png_options.filter_strategies.size(); i++) {
-      strategy_enable |= 1 << png_options.filter_strategies[i];
+      strategy_enable |=
+        (1 << png_options.filter_strategies[filterstrategies[i]]);
     }
   }
 
@@ -654,6 +656,10 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
   if (!error) {
     std::vector<unsigned char> filter;
     std::vector<unsigned char> temp;
+    std::vector<unsigned char> predefined;
+    if (strategy_enable & (1 << kStrategyPredefined)) {
+      lodepng::getFilterTypes(predefined, origpng);
+    }
     size_t bestsize = SIZE_MAX;
 
     uint64_t r[2];
@@ -679,7 +685,7 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
 
       std::vector<unsigned char> filterbank;
       // initialize random filters for genetic algorithm
-      if (strategy_enable | (1 << kStrategyGeneticAlgorithm)) {
+      if (strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
         filterbank.resize(h * std::max(int(kNumFilterStrategies),
                                        png_options.ga_population_size));
         for (unsigned i = 0; i < filterbank.size(); ++i) {
@@ -687,7 +693,7 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
         }
       }
 
-      for (int i = 0; i < kNumFilterStrategies; i++) {
+      for (int i = 0; i < kNumFilterStrategies; ++i) {
         if (!(strategy_enable & (1 << i))) continue;
         temp.clear();
         // If auto_filter_strategy, use fast compression to check which PNG
@@ -702,8 +708,18 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
             printf("Filter strategy %s: %d bytes\n", strategy_name[i].c_str(),
                    (int) temp.size());
           }
-          if (strategy_enable | (1 << kStrategyGeneticAlgorithm)) {
+          if ((strategy_enable & (1 << kStrategyPredefined)
+              && i <= pre_predefined)
+              || strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
             lodepng::getFilterTypes(filter, temp);
+          }
+          // Skip predefined if already covered by another strategy
+          if (strategy_enable & (1 << kStrategyPredefined)
+              && i <= pre_predefined && predefined == filter) {
+            strategy_enable &= ~(1 << kStrategyPredefined);
+          }
+          // Store filter for use in genetic algorithm seeding
+          if (strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
             std::copy(filter.begin(), filter.end(), filterbank.begin() + i * h);
           }
           if (temp.size() < bestsize) {
