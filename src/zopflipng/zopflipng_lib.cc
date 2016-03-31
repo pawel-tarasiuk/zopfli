@@ -364,6 +364,15 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
         i+=(w*4);
       }
     }
+  } else if (cleaner & 32) {  // None filter (white)
+    for (size_t i = 0; i < w * h; i++) {
+      if (image[i * 4 + 3] == 0) {
+        // if alpha is 0, set the RGB values to 255 (white).
+        image[i * 4 + 0] = 255;
+        image[i * 4 + 1] = 255;
+        image[i * 4 + 2] = 255;
+      }
+    }
   }
 }
 
@@ -656,7 +665,7 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     unsigned bestcleaner = 0;
     // If all criteria met, use cleaners
     unsigned numcleaners = png_options.lossy_transparent > 0 && !bit16
-                           && oversizedcolortype == 0 ? 5 : 1;
+                           && oversizedcolortype == 0 ? 6 : 1;
     for (unsigned j = 0; j < numcleaners; ++j) {
       unsigned cleaner = (1 << j);
       if (png_options.lossy_transparent > 0) {
