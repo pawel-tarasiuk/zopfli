@@ -906,6 +906,9 @@ unsigned compress(std::vector<unsigned char>& out, const std::vector<unsigned ch
                   const LodePNGCompressSettings& settings = lodepng_default_compress_settings);
 #endif /* LODEPNG_COMPILE_ENCODER */
 #endif /* LODEPNG_COMPILE_ZLIB */
+
+/* Generate a random filter */
+void randomFilter(std::vector<unsigned char>& filter);
 } /* namespace lodepng */
 #endif /*LODEPNG_COMPILE_CPP*/
 

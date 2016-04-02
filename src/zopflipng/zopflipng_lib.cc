@@ -516,20 +516,6 @@ unsigned TryOptimize(
   return 0;
 }
 
-static void InitXORShift128Plus(uint64_t* s) {
-  s[0] = 1;
-  s[1] = 2;
-}
-
-static uint64_t XORShift128Plus(uint64_t* s) {
-  uint64_t x = s[0];
-  uint64_t const y = s[1];
-  s[0] = y;
-  x ^= x << 23;
-  s[1] = x ^ y ^ (x >> 17) ^ (y >> 26);
-  return s[1] + y;
-}
-
 // Outputs the intersection of keepnames and non-essential chunks which are in
 // the PNG image.
 void ChunksToKeep(const std::vector<unsigned char>& origpng,
@@ -662,9 +648,6 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     }
     size_t bestsize = SIZE_MAX;
 
-    uint64_t r[2];
-    InitXORShift128Plus(r);
-
     int oversizedcolortype = bit16 ? 0
                              : TryColorReduction(&inputstate, &image[0], w, h);
 
@@ -688,9 +671,7 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
       if (strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
         filterbank.resize(h * std::max(int(kNumFilterStrategies),
                                        png_options.ga_population_size));
-        for (unsigned i = 0; i < filterbank.size(); ++i) {
-          filterbank[i] = XORShift128Plus(r) % 5;
-        }
+        lodepng::randomFilter(filterbank);
       }
 
       for (int i = 0; i < kNumFilterStrategies; ++i) {
