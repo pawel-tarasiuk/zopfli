@@ -227,6 +227,8 @@ int main(int argc, char *argv[]) {
             return 1;
           }
         }
+      } else if (name == "--lossy_transparent") {
+        png_options.lossy_transparent |= 1;
       } else if (name == "--lossy_8bit") {
         png_options.lossy_8bit = true;
       } else if (name == "--iterations") {
@@ -264,8 +266,6 @@ int main(int argc, char *argv[]) {
               return 1;
           }
           png_options.filter_strategies.push_back(strategy);
-          // Enable auto filter strategy only if no user-specified filter is
-          // given.
         }
       } else if (name == "--zopfli_filters") {
           png_options.auto_filter_strategy = false;
