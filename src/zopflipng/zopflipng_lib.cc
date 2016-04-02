@@ -686,13 +686,13 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     }
     size_t bestsize = SIZE_MAX;
 
-    int oversizedcolortype = bit16 ? 0
-                             : TryColorReduction(&inputstate, &image[0], w, h);
+    unsigned numcleaners = 1;
+    // If all criteria met, use cleaners
+    if (!bit16 && png_options.lossy_transparent > 0) {
+      if (TryColorReduction(&inputstate, &image[0], w, h) == 0) numcleaners = 6;
+    }
 
     unsigned bestcleaner = 0;
-    // If all criteria met, use cleaners
-    unsigned numcleaners = png_options.lossy_transparent > 0 && !bit16
-                           && oversizedcolortype == 0 ? 6 : 1;
     for (unsigned j = 0; j < numcleaners; ++j) {
       unsigned cleaner = (1 << j);
       if (png_options.lossy_transparent > 0) {

@@ -228,7 +228,7 @@ int main(int argc, char *argv[]) {
           }
         }
       } else if (name == "--lossy_transparent") {
-        png_options.lossy_transparent |= 1;
+        png_options.lossy_transparent |= 2;
       } else if (name == "--lossy_8bit") {
         png_options.lossy_8bit = true;
       } else if (name == "--iterations") {
