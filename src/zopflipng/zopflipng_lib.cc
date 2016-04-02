@@ -132,7 +132,8 @@ int TryColorReduction(lodepng::State* inputstate, unsigned char* image,
       }
     }
     if (palette) {
-      // If there are now less colors, update palette of input image to match this.
+      // If there are now less colors, update palette of input image to match
+      // this.
       if (palette && inputstate->info_png.color.palettesize > 0) {
         CountColors(&count, image, w, h, false);
         if (count.size() < inputstate->info_png.color.palettesize) {
@@ -161,12 +162,17 @@ int TryColorReduction(lodepng::State* inputstate, unsigned char* image,
   }
 }
 
-// Remove RGB information from pixels with alpha=0 (does the same job as cryopng)
-void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int cleaner) {
+// Remove RGB information from pixels with alpha=0 (does the same job as
+// cryopng)
+unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
+                                  int cleaner) {
+  unsigned changes = 0;
   if (cleaner & 1) {  // None filter
     for (size_t i = 0; i < w * h; i++) {
       if (image[i * 4 + 3] == 0) {
         // if alpha is 0, set the RGB values to zero (black).
+        if (changes == 0 && (image[i * 4 + 0] != 0 || image[i * 4 + 1] != 0
+            || image[i * 4 + 2] != 0)) changes = 1;
         image[i * 4 + 0] = 0;
         image[i * 4 + 1] = 0;
         image[i * 4 + 2] = 0;
@@ -180,6 +186,8 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
       for (size_t j = 3; j < 4 * w;) {
         // if alpha is 0, set the RGB values to those of the pixel on the left.
         if (image[i + j] == 0) {
+          if (changes == 0 && (image[i + j - 3] != pr || image[i + j - 2] != pg
+              || image[i + j - 1] != pb)) changes = 1;
           image[i + j - 3] = pr;
           image[i + j - 2] = pg;
           image[i + j - 1] = pb;
@@ -194,8 +202,12 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
       if (w > 1)
       {
         for (size_t j = 4 * (w - 2) + 3; j + 1 > 0;) {
-          // if alpha is 0, set the RGB values to those of the pixel on the right.
+          // if alpha is 0, set the RGB values to those of the pixel on the
+          // right.
           if (image[i + j] == 0) {
+            if (changes == 0 && (image[i + j - 3] != pr
+                || image[i + j - 2] != pg
+                || image[i + j - 1] != pb)) changes = 1;
             image[i + j - 3] = pr;
             image[i + j - 2] = pg;
             image[i + j - 1] = pb;
@@ -215,6 +227,8 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
     for (size_t j = 3; j < 4 * w;) {
       // if alpha is 0, set the RGB values to zero (black), first line only.
       if (image[j] == 0) {
+        if (changes == 0 && (image[j - 3] != 0 || image[j - 2] != 0
+            || image[j - 1] != 0)) changes = 1;
         image[j - 3] = 0;
         image[j - 2] = 0;
         image[j - 1] = 0;
@@ -226,6 +240,9 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
         for (size_t i = w * 4; i < (4 * w * h); ) {
           // if alpha is 0, set the RGB values to those of the upper pixel.
           if (image[i + j] == 0) {
+            if (changes == 0 && (image[i + j - 3] != image[i + j - 3 - 4 * w]
+                || image[i + j - 2] != image[i + j - 2 - 4 * w]
+                || image[i + j - 1] != image[i + j - 1 - 4 * w])) changes = 1;
             image[i + j - 3] = image[i + j - 3 - 4 * w];
             image[i + j - 2] = image[i + j - 2 - 4 * w];
             image[i + j - 1] = image[i + j - 1 - 4 * w];
@@ -235,6 +252,9 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
         for (size_t i = 4 * w * (h - 2); i + w * 4 > 0;) {
           // if alpha is 0, set the RGB values to those of the lower pixel.
           if (image[i + j] == 0) {
+            if (changes == 0 && (image[i + j - 3] != image[i + j - 3 + 4 * w]
+                || image[i + j - 2] != image[i + j - 2 + 4 * w]
+                || image[i + j - 1] != image[i + j - 1 + 4 * w])) changes = 1;
             image[i + j - 3] = image[i + j - 3 + 4 * w];
             image[i + j - 2] = image[i + j - 2 + 4 * w];
             image[i + j - 1] = image[i + j - 1 + 4 * w];
@@ -249,12 +269,14 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
     int pg = 0;
     int pb = 0;
     for (size_t j = 3; j < 4*w;) {
-      // if alpha is 0, set the RGB values to the half of those of the pixel on the left,
-      // first line only.
+      // if alpha is 0, set the RGB values to the half of those of the pixel on
+      // the left, first line only.
       if (image[j] == 0) {
         pr = pr>>1;
         pg = pg>>1;
         pb = pb>>1;
+        if (changes == 0 && (image[j - 3] != pr || image[j - 2] != pg
+            || image[j - 1] != pb)) changes = 1;
         image[j - 3] = pr;
         image[j - 2] = pg;
         image[j - 1] = pb;
@@ -269,12 +291,15 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
       for (size_t i = w*4; i < (4 * w * h); ) {
         pr = pg = pb = 0;   // reset to zero at each new line
         for (size_t j = 3; j < 4*w;) {
-          // if alpha is 0, set the RGB values to the half of the sum of the pixel on the
-          // left and the upper pixel.
+          // if alpha is 0, set the RGB values to the half of the sum of the
+          // pixel on the left and the upper pixel.
           if (image[i + j] == 0) {
             pr = (pr+(int)image[i + j - (3 + 4*w)])>>1;
             pg = (pg+(int)image[i + j - (2 + 4*w)])>>1;
             pb = (pb+(int)image[i + j - (1 + 4*w)])>>1;
+            if (changes == 0 && (image[i + j - 3] != pr
+                || image[i + j - 2] != pg
+                || image[i + j - 1] != pb)) changes = 1;
             image[i + j - 3] = pr;
             image[i + j - 2] = pg;
             image[i + j - 1] = pb;
@@ -295,6 +320,8 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
     for (size_t j = 3; j < 4*w;) {  // First line (border effects)
       // if alpha is 0, alter the RGB value to a possibly more efficient one.
       if (image[j] == 0) {
+        if (changes == 0 && (image[j - 3] != pre || image[j - 2] != pgr
+            || image[j - 1] != pbl)) changes = 1;
         image[j - 3] = pre;
         image[j - 2] = pgr;
         image[j - 1] = pbl;
@@ -343,13 +370,20 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
               pc = abs(p + pc);
               pbl = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
 
+              if (changes == 0 && (image[i + j - 3] != pre
+                  || image[i + j - 2] != pgr
+                  || image[i + j - 1] != pbl)) changes = 1;
               image[i + j - 3] = pre;
               image[i + j - 2] = pgr;
               image[i + j - 1] = pbl;
-            } else {  // first column, set the RGB values to those of the upper pixel.
+            } else {
+              // first column, set the RGB values to those of the upper pixel.
               pre = (int)image[i + j - (3 + 4*w)];
               pgr = (int)image[i + j - (2 + 4*w)];
               pbl = (int)image[i + j - (1 + 4*w)];
+              if (changes == 0 && (image[i + j - 3] != pre
+                  || image[i + j - 2] != pgr
+                  || image[i + j - 1] != pbl)) changes = 1;
               image[i + j - 3] = pre;
               image[i + j - 2] = pgr;
               image[i + j - 1] = pbl;
@@ -368,12 +402,16 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h, int 
     for (size_t i = 0; i < w * h; i++) {
       if (image[i * 4 + 3] == 0) {
         // if alpha is 0, set the RGB values to 255 (white).
-        image[i * 4 + 0] = 255;
-        image[i * 4 + 1] = 255;
-        image[i * 4 + 2] = 255;
+        if (changes == 0 && (image[i * 4 + 0] != 255u
+            || image[i * 4 + 1] != 255u
+            || image[i * 4 + 2] != 255u)) changes = 1;
+        image[i * 4 + 0] = 255u;
+        image[i * 4 + 1] = 255u;
+        image[i * 4 + 2] = 255u;
       }
     }
   }
+  return changes;
 }
 
 // Tries to optimize given a single PNG filter strategy.
@@ -661,7 +699,8 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
         // If lossy_transparent, remove RGB information from pixels with alpha=0
         if (png_options.lossy_transparent & cleaner) {
           if (verbose) printf("Cleaning alpha using method %i\n", j);
-          LossyOptimizeTransparent(&image[0], w, h, cleaner);
+          if (LossyOptimizeTransparent(&image[0], w, h, cleaner) == 0
+              && cleaner > 1) continue;
         }
         else continue;
       }
