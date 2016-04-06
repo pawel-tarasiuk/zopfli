@@ -51,6 +51,37 @@ enum ZopfliPNGFilterStrategy {
   kNumFilterStrategies /* Not a strategy but used for the size of this enum */
 };
 
+enum ZopfliPNGPalettePriority {
+  kPriorityPopularity,
+  kPriorityRGB,
+  kPriorityYUV,
+  kPriorityLab,
+  kPriorityMSB,
+  kNumPalettePriorities
+};
+
+enum ZopfliPNGPaletteDirection {
+  kDirectionAscending,
+  kDirectionDescending,
+  kNumPaletteDirections
+};
+
+enum ZopfliPNGPaletteTransparency {
+  kTransparencyIgnore,
+  kTransparencySort,
+  kTransparencyFirst,
+  kNumPaletteTransparencies
+};
+
+enum ZopfliPNGPaletteOrder {
+  kOrderNone,
+  kOrderGlobal,
+  kOrderNearest,
+  kOrderWeight,
+  kOrderNeighbor,
+  kNumPaletteOrders
+};
+
 typedef struct CZopfliPNGOptions {
   int lossy_transparent;
   int lossy_8bit;
@@ -58,6 +89,18 @@ typedef struct CZopfliPNGOptions {
   enum ZopfliPNGFilterStrategy* filter_strategies;
   // How many strategies to try.
   int num_filter_strategies;
+
+  enum ZopfliPNGPalettePriority* palette_priorities;
+  int num_palette_priorities;
+
+  enum ZopfliPNGPaletteDirection* palette_directions;
+  int num_palette_directions;
+
+  enum ZopfliPNGPaletteTransparency* palette_transparencies;
+  int num_palette_transparencies;
+
+  enum ZopfliPNGPaletteOrder* palette_orders;
+  int num_palette_orders;
 
   int auto_filter_strategy;
 
@@ -123,6 +166,18 @@ struct ZopfliPNGOptions {
 
   // Filter strategies to try
   std::vector<ZopfliPNGFilterStrategy> filter_strategies;
+
+  // Palette priority strategies to try
+  std::vector<ZopfliPNGPalettePriority> palette_priorities;
+
+  // Palette sort directions to try
+  std::vector<ZopfliPNGPaletteDirection> palette_directions;
+
+  // Palette transparency strategies to try
+  std::vector<ZopfliPNGPaletteTransparency> palette_transparencies;
+
+  // Palette ordering strategies to try
+  std::vector<ZopfliPNGPaletteOrder> palette_orders;
 
   // Automatically choose filter strategy using less good compression
   bool auto_filter_strategy;

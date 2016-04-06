@@ -73,7 +73,7 @@ unsigned CustomPNGDeflate(unsigned char** out, size_t* outsize,
 
 // Returns 32-bit integer value for RGBA color.
 static unsigned ColorIndex(const unsigned char* color) {
-  return color[0] + 256u * color[1] + 65536u * color[2] + 16777216u * color[3];
+  return *(unsigned int*) color;
 }
 
 // Counts amount of colors in the image, up to 257. If transparent_counts_as_one
@@ -84,20 +84,20 @@ void CountColors(std::set<unsigned>* unique,
                  bool transparent_counts_as_one) {
   unique->clear();
   for (size_t i = 0; i < w * h; i++) {
-    unsigned index = ColorIndex(&image[i * 4]);
-    if (transparent_counts_as_one && image[i * 4 + 3] == 0) index = 0;
+    unsigned index = ColorIndex(&image[i << 2]);
+    if (transparent_counts_as_one && image[(i << 2) + 3] == 0) index = 0;
     unique->insert(index);
     if (unique->size() > 256) break;
   }
 }
 
 // Prepare image for PNG-32 to PNG-24(+tRNS) or PNG-8(+tRNS) reduction.
-int TryColorReduction(lodepng::State* inputstate, unsigned char* image,
-    unsigned w, unsigned h) {
+void TryColorReduction(lodepng::State* inputstate, unsigned char* image,
+                      unsigned w, unsigned h) {
   // First look for binary (all or nothing) transparency color-key based.
   bool key = true;
   for (size_t i = 0; i < w * h; i++) {
-    if (image[i * 4 + 3] > 0 && image[i * 4 + 3] < 255) {
+    if (image[(i << 2) + 3] > 0 && image[(i << 2) + 3] < 255) {
       key = false;
       break;
     }
@@ -109,26 +109,24 @@ int TryColorReduction(lodepng::State* inputstate, unsigned char* image,
 
   // Choose the color key or first initial background color.
   if (key || palette) {
-    int r = 0;
-    int g = 0;
-    int b = 0;
+    int r = 0, g = 0, b = 0;
     for (size_t i = 0; i < w * h; i++) {
-      if (image[i * 4 + 3] == 0) {
+      if (image[(i << 2) + 3] == 0) {
         // Use RGB value of first encountered transparent pixel. This can be
         // used as a valid color key, or in case of palette ensures a color
         // existing in the input image palette is used.
-        r = image[i * 4 + 0];
-        g = image[i * 4 + 1];
-        b = image[i * 4 + 2];
+        r = image[(i << 2) + 0];
+        g = image[(i << 2) + 1];
+        b = image[(i << 2) + 2];
         break;
       }
     }
     for (size_t i = 0; i < w * h; i++) {
-      if (image[i * 4 + 3] == 0) {
+      if (image[(i << 2) + 3] == 0) {
         // if alpha is 0, set the RGB value to the sole color-key.
-        image[i * 4 + 0] = r;
-        image[i * 4 + 1] = g;
-        image[i * 4 + 2] = b;
+        image[(i << 2) + 0] = r;
+        image[(i << 2) + 1] = g;
+        image[(i << 2) + 2] = b;
       }
     }
     if (palette) {
@@ -140,25 +138,19 @@ int TryColorReduction(lodepng::State* inputstate, unsigned char* image,
           std::vector<unsigned char> palette_out;
           unsigned char* palette_in = inputstate->info_png.color.palette;
           for (size_t i = 0; i < inputstate->info_png.color.palettesize; i++) {
-            if (count.count(ColorIndex(&palette_in[i * 4])) != 0) {
-              palette_out.push_back(palette_in[i * 4 + 0]);
-              palette_out.push_back(palette_in[i * 4 + 1]);
-              palette_out.push_back(palette_in[i * 4 + 2]);
-              palette_out.push_back(palette_in[i * 4 + 3]);
+            if (count.count(ColorIndex(&palette_in[i << 2])) != 0) {
+              palette_out.push_back(palette_in[(i << 2) + 0]);
+              palette_out.push_back(palette_in[(i << 2) + 1]);
+              palette_out.push_back(palette_in[(i << 2) + 2]);
+              palette_out.push_back(palette_in[(i << 2) + 3]);
             }
           }
-          inputstate->info_png.color.palettesize = palette_out.size() / 4;
-          for (size_t i = 0; i < palette_out.size(); i++) {
-            palette_in[i] = palette_out[i];
-          }
+          inputstate->info_png.color.palettesize = (palette_out.size() >> 2);
+          std::copy(palette_in, palette_in + palette_out.size(),
+                    palette_out.begin());
         }
       }
-      return 2;
-    } else {
-      return 1;
     }
-  } else {
-    return 0;
   }
 }
 
@@ -169,21 +161,22 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
   unsigned changes = 0;
   if (cleaner & 1) {  // None filter
     for (size_t i = 0; i < w * h; i++) {
-      if (image[i * 4 + 3] == 0) {
+      if (image[(i << 2) + 3] == 0) {
         // if alpha is 0, set the RGB values to zero (black).
-        if (changes == 0 && (image[i * 4 + 0] != 0 || image[i * 4 + 1] != 0
-            || image[i * 4 + 2] != 0)) changes = 1;
-        image[i * 4 + 0] = 0;
-        image[i * 4 + 1] = 0;
-        image[i * 4 + 2] = 0;
+        if (changes == 0 && (image[(i << 2) + 0] != 0
+            || image[(i << 2) + 1] != 0
+            || image[(i << 2) + 2] != 0)) changes = 1;
+        image[(i << 2) + 0] = 0;
+        image[(i << 2) + 1] = 0;
+        image[(i << 2) + 2] = 0;
       }
     }
   } else if (cleaner & 2) {  // Sub filter
     int pr = 0;
     int pg = 0;
     int pb = 0;
-    for (size_t i = 0; i < (4 * w * h); ) {
-      for (size_t j = 3; j < 4 * w;) {
+    for (size_t i = 0; i < ((w << 2) * h); ) {
+      for (size_t j = 3; j < (w << 2);) {
         // if alpha is 0, set the RGB values to those of the pixel on the left.
         if (image[i + j] == 0) {
           if (changes == 0 && (image[i + j - 3] != pr || image[i + j - 2] != pg
@@ -201,7 +194,7 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
       }
       if (w > 1)
       {
-        for (size_t j = 4 * (w - 2) + 3; j + 1 > 0;) {
+        for (size_t j = ((w - 2) << 2) + 3; j + 1 > 0;) {
           // if alpha is 0, set the RGB values to those of the pixel on the
           // right.
           if (image[i + j] == 0) {
@@ -220,11 +213,11 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
           j -= 4;
         }
       }
-      i += (w * 4);
+      i += (w << 2);
       pr = pg = pb = 0;   // reset to zero at each new line
     }
   } else if (cleaner & 4) {  // Up filter
-    for (size_t j = 3; j < 4 * w;) {
+    for (size_t j = 3; j < (w << 2);) {
       // if alpha is 0, set the RGB values to zero (black), first line only.
       if (image[j] == 0) {
         if (changes == 0 && (image[j - 3] != 0 || image[j - 2] != 0
@@ -236,30 +229,34 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
       j += 4;
     }
     if (h > 1) {
-      for (size_t j = 3; j < 4 * w;) {
-        for (size_t i = w * 4; i < (4 * w * h); ) {
+      for (size_t j = 3; j < (w << 2);) {
+        for (size_t i = (w << 2); i < ((w << 2) * h); ) {
           // if alpha is 0, set the RGB values to those of the upper pixel.
           if (image[i + j] == 0) {
-            if (changes == 0 && (image[i + j - 3] != image[i + j - 3 - 4 * w]
-                || image[i + j - 2] != image[i + j - 2 - 4 * w]
-                || image[i + j - 1] != image[i + j - 1 - 4 * w])) changes = 1;
-            image[i + j - 3] = image[i + j - 3 - 4 * w];
-            image[i + j - 2] = image[i + j - 2 - 4 * w];
-            image[i + j - 1] = image[i + j - 1 - 4 * w];
+            if (changes == 0 && (image[i + j - 3] != image[i + j - 3 - (w << 2)]
+                || image[i + j - 2] != image[i + j - 2 - (w << 2)]
+                || image[i + j - 1] != image[i + j - 1 - (w << 2)])) {
+              changes = 1;
+            }
+            image[i + j - 3] = image[i + j - 3 - (w << 2)];
+            image[i + j - 2] = image[i + j - 2 - (w << 2)];
+            image[i + j - 1] = image[i + j - 1 - (w << 2)];
           }
-          i += (w * 4);
+          i += (w << 2);
         }
-        for (size_t i = 4 * w * (h - 2); i + w * 4 > 0;) {
+        for (size_t i = (w << 2) * (h - 2); i + (w << 2) > 0;) {
           // if alpha is 0, set the RGB values to those of the lower pixel.
           if (image[i + j] == 0) {
-            if (changes == 0 && (image[i + j - 3] != image[i + j - 3 + 4 * w]
-                || image[i + j - 2] != image[i + j - 2 + 4 * w]
-                || image[i + j - 1] != image[i + j - 1 + 4 * w])) changes = 1;
-            image[i + j - 3] = image[i + j - 3 + 4 * w];
-            image[i + j - 2] = image[i + j - 2 + 4 * w];
-            image[i + j - 1] = image[i + j - 1 + 4 * w];
+            if (changes == 0 && (image[i + j - 3] != image[i + j - 3 + (w << 2)]
+                || image[i + j - 2] != image[i + j - 2 + (w << 2)]
+                || image[i + j - 1] != image[i + j - 1 + (w << 2)])) {
+              changes = 1;
+            }
+            image[i + j - 3] = image[i + j - 3 + (w << 2)];
+            image[i + j - 2] = image[i + j - 2 + (w << 2)];
+            image[i + j - 1] = image[i + j - 1 + (w << 2)];
           }
-          i -= (w * 4);
+          i -= (w << 2);
         }
         j += 4;
       }
@@ -268,13 +265,13 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
     int pr = 0;
     int pg = 0;
     int pb = 0;
-    for (size_t j = 3; j < 4*w;) {
+    for (size_t j = 3; j < (w << 2);) {
       // if alpha is 0, set the RGB values to the half of those of the pixel on
       // the left, first line only.
       if (image[j] == 0) {
-        pr = pr>>1;
-        pg = pg>>1;
-        pb = pb>>1;
+        pr = pr >> 1;
+        pg = pg >> 1;
+        pb = pb >> 1;
         if (changes == 0 && (image[j - 3] != pr || image[j - 2] != pg
             || image[j - 1] != pb)) changes = 1;
         image[j - 3] = pr;
@@ -285,18 +282,18 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
         pg = image[j - 2];
         pb = image[j - 1];
       }
-      j+=4;
+      j +=  4;
     }
     if (h > 1) {
-      for (size_t i = w*4; i < (4 * w * h); ) {
+      for (size_t i = (w << 2); i < ((w << 2) * h); ) {
         pr = pg = pb = 0;   // reset to zero at each new line
-        for (size_t j = 3; j < 4*w;) {
+        for (size_t j = 3; j < (w << 2);) {
           // if alpha is 0, set the RGB values to the half of the sum of the
           // pixel on the left and the upper pixel.
           if (image[i + j] == 0) {
-            pr = (pr+(int)image[i + j - (3 + 4*w)])>>1;
-            pg = (pg+(int)image[i + j - (2 + 4*w)])>>1;
-            pb = (pb+(int)image[i + j - (1 + 4*w)])>>1;
+            pr = (pr + (int)image[i + j - (3 + (w << 2))]) >> 1;
+            pg = (pg + (int)image[i + j - (2 + (w << 2))]) >> 1;
+            pb = (pb + (int)image[i + j - (1 + (w << 2))]) >> 1;
             if (changes == 0 && (image[i + j - 3] != pr
                 || image[i + j - 2] != pg
                 || image[i + j - 1] != pb)) changes = 1;
@@ -308,16 +305,16 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
             pg = image[i + j - 2];
             pb = image[i + j - 1];
           }
-          j+=4;
+          j += 4;
         }
-        i+=(w*4);
+        i += (w << 2);
       }
     }
   } else if (cleaner & 16) {  // Paeth filter
     int pre = 0;
     int pgr = 0;
     int pbl = 0;
-    for (size_t j = 3; j < 4*w;) {  // First line (border effects)
+    for (size_t j = 3; j < (w << 2);) {  // First line (border effects)
       // if alpha is 0, alter the RGB value to a possibly more efficient one.
       if (image[j] == 0) {
         if (changes == 0 && (image[j - 3] != pre || image[j - 2] != pgr
@@ -330,19 +327,19 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
         pgr = image[j - 2];
         pbl = image[j - 1];
       }
-      j+=4;
+      j += 4;
     }
     if (h > 1) {
       int a, b, c, pa, pb, pc, p;
-      for (size_t i = w*4; i < (4 * w * h); ) {
+      for (size_t i = (w << 2); i < ((w << 2) * h); ) {
         pre = pgr = pbl = 0;   // reset to zero at each new line
-        for (size_t j = 3; j < 4*w;) {
+        for (size_t j = 3; j < (w << 2);) {
           // if alpha is 0, set the RGB values to the Paeth predictor.
           if (image[i + j] == 0) {
             if (j != 3) {  // not in first column
               a = pre;
-              b = (int)image[i + j - (3 + 4*w)];
-              c = (int)image[i + j - (7 + 4*w)];
+              b = (int)image[i + j - (3 + (w << 2))];
+              c = (int)image[i + j - (7 + (w << 2))];
               p = b - c;
               pc = a - c;
               pa = abs(p);
@@ -351,8 +348,8 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
               pre = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
 
               a = pgr;
-              b = (int)image[i + j - (2 + 4*w)];
-              c = (int)image[i + j - (6 + 4*w)];
+              b = (int)image[i + j - (2 + (w << 2))];
+              c = (int)image[i + j - (6 + (w << 2))];
               p = b - c;
               pc = a - c;
               pa = abs(p);
@@ -361,8 +358,8 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
               pgr = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
 
               a = pbl;
-              b = (int)image[i + j - (1 + 4*w)];
-              c = (int)image[i + j - (5 + 4*w)];
+              b = (int)image[i + j - (1 + (w << 2))];
+              c = (int)image[i + j - (5 + (w << 2))];
               p = b - c;
               pc = a - c;
               pa = abs(p);
@@ -378,9 +375,9 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
               image[i + j - 1] = pbl;
             } else {
               // first column, set the RGB values to those of the upper pixel.
-              pre = (int)image[i + j - (3 + 4*w)];
-              pgr = (int)image[i + j - (2 + 4*w)];
-              pbl = (int)image[i + j - (1 + 4*w)];
+              pre = (int)image[i + j - (3 + (w << 2))];
+              pgr = (int)image[i + j - (2 + (w << 2))];
+              pbl = (int)image[i + j - (1 + (w << 2))];
               if (changes == 0 && (image[i + j - 3] != pre
                   || image[i + j - 2] != pgr
                   || image[i + j - 1] != pbl)) changes = 1;
@@ -393,21 +390,21 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
             pgr = image[i + j - 2];
             pbl = image[i + j - 1];
           }
-          j+=4;
+          j += 4;
         }
-        i+=(w*4);
+        i += (w << 2);
       }
     }
   } else if (cleaner & 32) {  // None filter (white)
     for (size_t i = 0; i < w * h; i++) {
-      if (image[i * 4 + 3] == 0) {
+      if (image[(i << 2) + 3] == 0) {
         // if alpha is 0, set the RGB values to 255 (white).
-        if (changes == 0 && (image[i * 4 + 0] != 255u
-            || image[i * 4 + 1] != 255u
-            || image[i * 4 + 2] != 255u)) changes = 1;
-        image[i * 4 + 0] = 255u;
-        image[i * 4 + 1] = 255u;
-        image[i * 4 + 2] = 255u;
+        if (changes == 0 && (image[(i << 2) + 0] != 255
+            || image[(i << 2) + 1] != 255
+            || image[(i << 2) + 2] != 255)) changes = 1;
+        image[(i << 2) + 0] = 255;
+        image[(i << 2) + 1] = 255;
+        image[(i << 2) + 2] = 255;
       }
     }
   }
@@ -419,8 +416,12 @@ unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
 unsigned TryOptimize(
     const std::vector<unsigned char>& image, unsigned w, unsigned h,
     const lodepng::State& inputstate, bool bit16, bool keep_colortype,
-    const std::vector<unsigned char>& origfile,
+    bool try_paletteless, const std::vector<unsigned char>& origfile,
     ZopfliPNGFilterStrategy filterstrategy,
+    ZopfliPNGPalettePriority palette_priority,
+    ZopfliPNGPaletteDirection palette_direction,
+    ZopfliPNGPaletteTransparency palette_transparency,
+    ZopfliPNGPaletteOrder palette_order,
     bool use_zopfli, int windowsize, const ZopfliPNGOptions* png_options,
     std::vector<unsigned char>* out, unsigned char* filterbank) {
   unsigned error = 0;
@@ -507,6 +508,66 @@ unsigned TryOptimize(
     default:
       break;
   }
+  switch(palette_priority) {
+    case kPriorityPopularity:
+      state.encoder.palette_priority = LPPS_POPULARITY;
+      break;
+    case kPriorityRGB:
+      state.encoder.palette_priority = LPPS_RGB;
+      break;
+    case kPriorityYUV:
+      state.encoder.palette_priority = LPPS_YUV;
+      break;
+    case kPriorityLab:
+      state.encoder.palette_priority = LPPS_LAB;
+      break;
+  case kPriorityMSB:
+      state.encoder.palette_priority = LPPS_MSB;
+      break;
+    default:
+      break;
+  }
+  switch(palette_direction) {
+    case kDirectionAscending:
+      state.encoder.palette_direction = LPDS_ASCENDING;
+      break;
+    case kDirectionDescending:
+      state.encoder.palette_direction = LPDS_DESCENDING;
+      break;
+    default:
+      break;
+  }
+  switch(palette_transparency) {
+    case kTransparencyIgnore:
+      state.encoder.palette_transparency = LPTS_IGNORE;
+      break;
+    case kTransparencySort:
+      state.encoder.palette_transparency = LPTS_SORT;
+      break;
+    case kTransparencyFirst:
+      state.encoder.palette_transparency = LPTS_FIRST;
+      break;
+    default:
+      break;
+  }
+  switch(palette_order) {
+    case kOrderNone:
+      state.encoder.palette_order = LPOS_NONE;
+      break;
+    case kOrderGlobal:
+      state.encoder.palette_order = LPOS_GLOBAL;
+      break;
+    case kOrderNearest:
+      state.encoder.palette_order = LPOS_NEAREST;
+      break;
+    case kOrderWeight:
+      state.encoder.palette_order = LPOS_NEAREST_WEIGHT;
+      break;
+    case kOrderNeighbor:
+      state.encoder.palette_order = LPOS_NEAREST_NEIGHBOR;
+    default:
+      break;
+  }
 
   state.encoder.add_id = false;
   state.encoder.text_compression = 1;
@@ -515,7 +576,7 @@ unsigned TryOptimize(
 
   // For very small output, also try without palette, it may be smaller thanks
   // to no palette storage overhead.
-  if (!error && out->size() < 4096 && !keep_colortype) {
+  if (!error && out->size() < 4096 && !keep_colortype && try_paletteless) {
     lodepng::State teststate;
     std::vector<unsigned char> temp;
     lodepng::decode(temp, w, h, teststate, *out);
@@ -620,6 +681,30 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     "distinct bigrams", "entropy", "brute force", "incremental brute force",
     "predefined", "genetic algorithm"
   };
+  ZopfliPNGPalettePriority palette_priorities[kNumPalettePriorities] = {
+    kPriorityPopularity, kPriorityRGB, kPriorityYUV, kPriorityLab, kPriorityMSB
+  };
+  std::string priority_name[kNumPalettePriorities] = {
+    "popularity", "rgb", "yuv", "lab", "msb"
+  };
+  ZopfliPNGPaletteDirection palette_directions[kNumPaletteDirections] = {
+    kDirectionAscending, kDirectionDescending
+  };
+  std::string direction_name[kNumPaletteDirections] = {
+    "ascending", "descending"
+  };
+  ZopfliPNGPaletteTransparency palette_transparencies[kNumPaletteTransparencies] = {
+    kTransparencyIgnore, kTransparencySort, kTransparencyFirst
+  };
+  std::string transparency_name[kNumPaletteTransparencies] = {
+    "ignore", "sort", "first"
+  };
+  ZopfliPNGPaletteOrder palette_orders[kNumPaletteOrders] = {
+    kOrderNone, kOrderGlobal, kOrderNearest, kOrderWeight, kOrderNeighbor
+  };
+  std::string order_name[kNumPaletteOrders] = {
+    "none", "global", "nearest", "nearest weighted", "nearest neighbor"
+  };
   const int pre_predefined = 10;
   unsigned strategy_enable = 0;
   if (png_options.filter_strategies.empty()) {
@@ -631,7 +716,46 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
         (1 << png_options.filter_strategies[filterstrategies[i]]);
     }
   }
-
+  unsigned palette_priority_enable = 0;
+  if (png_options.palette_priorities.empty()) {
+    palette_priority_enable = (1 << kNumPalettePriorities) - 1;
+  }
+  else {
+    for (size_t i = 0; i < png_options.palette_priorities.size(); i++) {
+      palette_priority_enable |=
+          (1 << png_options.palette_priorities[palette_priorities[i]]);
+    }
+  }
+  unsigned palette_direction_enable = 0;
+  if (png_options.palette_directions.empty()) {
+    palette_direction_enable = (1 << kNumPaletteDirections) - 1;
+  }
+  else {
+    for (size_t i = 0; i < png_options.palette_directions.size(); i++) {
+      palette_direction_enable |=
+          (1 << png_options.palette_directions[palette_directions[i]]);
+    }
+  }
+  unsigned palette_transparency_enable = 0;
+  if (png_options.palette_transparencies.empty()) {
+    palette_transparency_enable = (1 << kNumPaletteTransparencies) - 1;
+  }
+  else {
+    for (size_t i = 0; i < png_options.palette_transparencies.size(); i++) {
+      palette_transparency_enable |=
+          (1 << png_options.palette_transparencies[palette_transparencies[i]]);
+    }
+  }
+  unsigned palette_order_enable = 0;
+  if (png_options.palette_orders.empty()) {
+    palette_order_enable = (1 << kNumPaletteOrders) - 1;
+  }
+  else {
+    for (size_t i = 0; i < png_options.palette_orders.size(); i++) {
+      palette_order_enable |=
+          (1 << png_options.palette_orders[palette_orders[i]]);
+    }
+  }
   std::vector<unsigned char> image;
   unsigned w, h;
   unsigned error;
@@ -685,17 +809,31 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
       lodepng::getFilterTypes(predefined, origpng);
     }
     size_t bestsize = SIZE_MAX;
+    unsigned bestcleaner = 0;
+    unsigned bestpriority = 0;
+    unsigned bestdirection = 0;
+    unsigned besttranparency = 0;
+    unsigned bestorder = 0;
 
     unsigned numcleaners = 1;
-    // If all criteria met, use cleaners
     if (!bit16 && png_options.lossy_transparent > 0) {
-      if (TryColorReduction(&inputstate, &image[0], w, h) == 0) numcleaners = 6;
+      TryColorReduction(&inputstate, &image[0], w, h);
     }
 
-    unsigned bestcleaner = 0;
+    bool has_transparent = false;
+    for (size_t i = 0; i < w * h; i++) {
+      if (image[(i << 2) + 3] == 0) {
+        has_transparent = true;
+        break;
+      }
+    }
+    if (!has_transparent) {
+      palette_transparency_enable = (1 << kTransparencyIgnore);
+    } else if (!bit16 && png_options.lossy_transparent > 0) numcleaners = 6;
+
     for (unsigned j = 0; j < numcleaners; ++j) {
       unsigned cleaner = (1 << j);
-      if (png_options.lossy_transparent > 0) {
+      if (png_options.lossy_transparent > 0 && has_transparent) {
         // If lossy_transparent, remove RGB information from pixels with alpha=0
         if (png_options.lossy_transparent & cleaner) {
           if (verbose) printf("Cleaning alpha using method %i\n", j);
@@ -705,47 +843,99 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
         else continue;
       }
 
-      std::vector<unsigned char> filterbank;
-      // initialize random filters for genetic algorithm
-      if (strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
-        filterbank.resize(h * std::max(int(kNumFilterStrategies),
-                                       png_options.ga_population_size));
-        lodepng::randomFilter(filterbank);
+      unsigned numpriorities = kNumPalettePriorities;
+      unsigned numdirections = kNumPaletteDirections;
+      unsigned numtransparencies = kNumPaletteTransparencies;
+      unsigned numorders = kNumPaletteOrders;
+      // Check whether image can be paletted
+      std::set<unsigned> count;
+      CountColors(&count, &image[0], w, h, false);
+      if (count.size() > 256) {
+        numpriorities = 1; palette_priority_enable = (1 << kPriorityPopularity);
+        numdirections = 1; palette_direction_enable = (1 << kDirectionDescending);
+        numtransparencies = 1; palette_transparency_enable = (1 << kTransparencyIgnore);
+        numorders = 1; palette_order_enable = (1 << kOrderNone);
       }
+      bool none_done = false;
 
-      for (int i = 0; i < kNumFilterStrategies; ++i) {
-        if (!(strategy_enable & (1 << i))) continue;
-        temp.clear();
-        // If auto_filter_strategy, use fast compression to check which PNG
-        // filter strategy gives the smallest output. This allows to then do
-        // the slow and good compression only on that filter type.
-        error = TryOptimize(image, w, h, inputstate, bit16, keep_colortype,
-                            origpng, filterstrategies[i],
-                            !png_options.auto_filter_strategy /* use_zopfli */,
-                            windowsize, &png_options, &temp, &filterbank[0]);
-        if (!error) {
-          if (verbose) {
-            printf("Filter strategy %s: %d bytes\n", strategy_name[i].c_str(),
-                   (int) temp.size());
-          }
-          if ((strategy_enable & (1 << kStrategyPredefined)
-              && i <= pre_predefined)
-              || strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
-            lodepng::getFilterTypes(filter, temp);
-          }
-          // Skip predefined if already covered by another strategy
-          if (strategy_enable & (1 << kStrategyPredefined)
-              && i <= pre_predefined && predefined == filter) {
-            strategy_enable &= ~(1 << kStrategyPredefined);
-          }
-          // Store filter for use in genetic algorithm seeding
-          if (strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
-            std::copy(filter.begin(), filter.end(), filterbank.begin() + i * h);
-          }
-          if (temp.size() < bestsize) {
-            bestsize = temp.size();
-            bestcleaner = cleaner;
-            (*resultpng).swap(temp);  // Store best result so far in the output.
+      bool try_paletteless = true;
+      for (unsigned pp = 0; pp < numpriorities; ++pp) {
+        if (!(palette_priority_enable & (1 << pp))) continue;
+        for (unsigned pd = 0; pd < numdirections; ++pd) {
+          if (!(palette_direction_enable & (1 << pd))) continue;
+          for (unsigned pt = 0; pt < numtransparencies; ++pt) {
+            if (!(palette_transparency_enable & (1 << pt))) continue;
+            for (unsigned po = 0; po < numorders; ++po) {
+              if (!(palette_order_enable & (1 << po))) continue;
+              if (palette_order_enable == (1 << kOrderNone)) {
+                if (none_done) continue;
+                none_done = true;
+              }
+
+              std::vector<unsigned char> filterbank;
+              // initialize random filters for genetic algorithm
+              if (strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
+                filterbank.resize(h * std::max(int(kNumFilterStrategies),
+                                               png_options.ga_population_size));
+                lodepng::randomFilter(filterbank);
+              }
+
+              for (int i = 0; i < kNumFilterStrategies; ++i) {
+                if (!(strategy_enable & (1 << i))) continue;
+                temp.clear();
+                // If auto_filter_strategy, use fast compression to check which
+                // PNG filter strategy gives the smallest output. This allows to
+                // then do the slow and good compression only on that filter
+                // type.
+                error = TryOptimize(image, w, h, inputstate, bit16,
+                                    keep_colortype, try_paletteless, origpng,
+                                    filterstrategies[i], palette_priorities[pp],
+                                    palette_directions[pd],
+                                    palette_transparencies[pt],
+                                    palette_orders[po],
+                                    !png_options.auto_filter_strategy
+                                    /* use_zopfli */, windowsize, &png_options,
+                                    &temp, &filterbank[0]);
+                try_paletteless = false;
+                if (!error) {
+                  if (verbose) {
+                    if (count.size() <= 256) {
+                      printf("Palette %s %s %s %s ", priority_name[pp].c_str(),
+                             direction_name[pd].c_str(),
+                             transparency_name[pt].c_str(),
+                             order_name[po].c_str());
+                    }
+                    printf("Filter %s: %d bytes\n",
+                           strategy_name[i].c_str(), (int) temp.size());
+                  }
+                  if ((strategy_enable & (1 << kStrategyPredefined)
+                      && i <= pre_predefined)
+                      || strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
+                    lodepng::getFilterTypes(filter, temp);
+                  }
+                  // Skip predefined if already covered by another strategy
+                  if (strategy_enable & (1 << kStrategyPredefined)
+                      && i <= pre_predefined && predefined == filter) {
+                    strategy_enable &= ~(1 << kStrategyPredefined);
+                  }
+                  // Store filter for use in genetic algorithm seeding
+                  if (strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
+                    std::copy(filter.begin(), filter.end(),
+                              filterbank.begin() + i * h);
+                  }
+                  if (temp.size() < bestsize) {
+                    bestsize = temp.size();
+                    bestcleaner = cleaner;
+                    bestpriority = pp;
+                    bestdirection = pd;
+                    besttranparency = pt;
+                    bestorder = po;
+                    // Store best result so far in the output.
+                    (*resultpng).swap(temp);
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -756,9 +946,12 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
         LossyOptimizeTransparent(&image[0], w, h, bestcleaner);
       }
       error = TryOptimize(image, w, h, inputstate, bit16, keep_colortype,
-                          *resultpng, kStrategyPredefined,
-                          true /* use_zopfli */, windowsize, &png_options,
-                          &temp, NULL);
+                          true /* try_paletteless */, *resultpng,
+                          kStrategyPredefined, palette_priorities[bestpriority],
+                          palette_directions[bestdirection],
+                          palette_transparencies[besttranparency],
+                          palette_orders[bestorder], true /* use_zopfli */,
+                          windowsize, &png_options, &temp, NULL);
       if (!error && temp.size() < bestsize) (*resultpng).swap(temp);
     }
   }
@@ -822,6 +1015,19 @@ extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
 
   for (int i = 0; i < png_options->num_filter_strategies; i++) {
     opts.filter_strategies.push_back(png_options->filter_strategies[i]);
+  }
+  for (int i = 0; i < png_options->num_palette_priorities; i++) {
+    opts.palette_priorities.push_back(png_options->palette_priorities[i]);
+  }
+  for (int i = 0; i < png_options->num_palette_directions; i++) {
+    opts.palette_directions.push_back(png_options->palette_directions[i]);
+  }
+  for (int i = 0; i < png_options->num_palette_transparencies; i++) {
+    opts.palette_transparencies.push_back(
+        png_options->palette_transparencies[i]);
+  }
+  for (int i = 0; i < png_options->num_palette_orders; i++) {
+    opts.palette_orders.push_back(png_options->palette_orders[i]);
   }
 
   for (int i = 0; i < png_options->num_keepchunks; i++) {

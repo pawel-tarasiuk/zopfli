@@ -32,9 +32,13 @@ Rename this file to lodepng.cpp to use it for C++, or to lodepng.c to use it for
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #ifdef LODEPNG_COMPILE_CPP
 #include <fstream>
+#include <set>
+#include <vector>
+#include <algorithm>
 #endif /*LODEPNG_COMPILE_CPP*/
 
 #if defined(_MSC_VER) && (_MSC_VER >= 1310) /*Visual Studio: A few warning types are not desired here.*/
@@ -3685,6 +3689,311 @@ unsigned lodepng_get_color_profile(LodePNGColorProfile* profile,
   return error;
 }
 
+// Returns 32-bit integer value for RGBA color.
+static unsigned color_index(const unsigned char* color) {
+  return *(unsigned int*) color;
+}
+
+// Counts amount of colors in the image, up to 257. If transparent_counts_as_one
+// is enabled, any color with alpha channel 0 is treated as a single color with
+// index 0.
+void count_colors(std::set<unsigned>* unique,
+                 const unsigned char* image, unsigned w, unsigned h,
+                 bool transparent_counts_as_one) {
+  unique->clear();
+  for (size_t i = 0; i < w * h; i++) {
+    unsigned index = color_index(&image[i << 2]);
+    if (transparent_counts_as_one && image[(i << 2) + 3] == 0) index = 0;
+    unique->insert(index);
+    if (unique->size() > 256) break;
+  }
+}
+
+void optimize_palette(LodePNGColorMode* mode_out, const unsigned char* image,
+                      unsigned w, unsigned h,
+                      LodePNGPalettePriorityStrategy priority,
+                      LodePNGPaletteDirectionStrategy direction,
+                      LodePNGPaletteTransparencyStrategy transparency,
+                      LodePNGPaletteOrderStrategy order) {
+  if (order == LPOS_NONE) return;
+  std::set<unsigned> count;
+  count_colors(&count, image, w, h, false);
+  // sortfield format:
+  // bit 0-7: original palette index
+  // bit 8-39: color encoding or popularity index
+  // bit 40-47: order score
+  // bit 48-62: unused
+  // bit 63: transparency flag
+  std::vector<uint64_t> sortfield(count.size());
+  for (size_t i = 0; i < sortfield.size(); ++i) sortfield[i] = i;
+  unsigned char* palette_in = mode_out->palette;
+  switch (priority) {
+    case LPPS_POPULARITY:
+      for (size_t i = 0; i < sortfield.size(); ++i) {
+        for (size_t j = 0; j < w * h; ++j) { // TODO inefficient: use a hash
+          if (color_index(&image[j << 2]) == color_index(&palette_in[i << 2])) {
+            sortfield[i] += (1 << 8);
+          }
+        }
+      }
+      break;
+    case LPPS_RGB:
+      for (size_t i = 0; i < sortfield.size(); ++i) {
+        sortfield[i] |= (uint64_t(palette_in[(i << 2) + 0]) << 32)
+          | (uint64_t(palette_in[(i << 2) + 1]) << 24)
+          | (uint64_t(palette_in[(i << 2) + 2]) << 16);
+      }
+      break;
+    case LPPS_YUV:
+      for (size_t i = 0; i < sortfield.size(); ++i) {
+        const double r = palette_in[(i << 2) + 0];
+        const double g = palette_in[(i << 2) + 1];
+        const double b = palette_in[(i << 2) + 2];
+        sortfield[i] |= (uint64_t(0.299 * r + 0.587 * g + 0.114 * b) << 32)
+          | (uint64_t((-0.14713 * r - 0.28886 * g + 0.436 * b + 111.18) / 0.872)
+             << 24)
+          | (uint64_t((0.615 * r - 0.51499 * g - 0.10001 * b + 156.825) / 1.23)
+             << 16);
+      }
+      break;
+    case LPPS_LAB:
+      {
+        const double ep = 216. / 24389.;
+        const double ka = 24389. / 27.;
+        const double ex = 1. / 3.;
+        const double de = 4. / 29.;
+        for (size_t i = 0; i < sortfield.size(); ++i) {
+          const double r = palette_in[(i << 2) + 0];
+          const double g = palette_in[(i << 2) + 1];
+          const double b = palette_in[(i << 2) + 2];
+          double vx = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 255 / 95.047;
+          double vy = (0.2126729 * r + 0.7151522 * g + 0.0721750 * b) / 255 / 100;
+          double vz = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 255 / 108.883;
+          vx = vx > ep ? std::pow(vx, ex) : ka * vx + de;
+          vy = vy > ep ? std::pow(vy, ex) : ka * vy + de;
+          vz = vz > ep ? std::pow(vz, ex) : ka * vz + de;
+          sortfield[i] |=  (uint64_t((vy * 116 - 16) / 100 * 255) << 32)
+            | (uint64_t((vx - vy) * 500 + 256) << 24)
+            | (uint64_t((vy - vz) * 200 + 256) << 16);
+        }
+      }
+      break;
+    case LPPS_MSB:
+      for (size_t i = 0; i < sortfield.size(); ++i) {
+        const uint64_t r = palette_in[(i << 2) + 0];
+        const uint64_t g = palette_in[(i << 2) + 1];
+        const uint64_t b = palette_in[(i << 2) + 2];
+        sortfield[i] |= ((r & 128) << 39) | ((g & 128) << 38)
+          | ((b & 128) << 37)
+          | ((r & 64) << 35) | ((g & 64) << 34) | ((b & 64) << 33)
+          | ((r & 32) << 31) | ((g & 32) << 30) | ((b & 32) << 29)
+          | ((r & 16) << 27) | ((g & 16) << 26) | ((b & 16) << 25)
+          | ((r & 8) << 23) | ((g & 8) << 22) | ((b & 8) << 21)
+          | ((r & 4) << 19) | ((g & 4) << 18) | ((b & 4) << 17)
+          | ((r & 2) << 15) | ((g & 2) << 14) | ((b & 2) << 13)
+          | ((r & 1) << 11) | ((g & 1) << 10) | ((b & 1) << 9);
+      }
+      break;
+    }
+  switch (transparency) {
+    case LPTS_IGNORE:
+      break;
+    case LPTS_SORT:
+      if (priority == LPPS_MSB) {
+        for (size_t i = 0; i < sortfield.size(); ++i) {
+          const uint64_t a = palette_in[(i << 2) + 3];
+          sortfield[i] |= ((a & 128) << 36) | ((a & 64) << 32)
+            | ((a & 32) << 28) | ((a & 16) << 24) | ((a & 8) << 20)
+            | ((a & 4) << 16) | ((a & 32) << 11) | ((a & 1) << 8);
+        }
+      } else if(priority != LPPS_POPULARITY) {
+        for (size_t i = 0; i < sortfield.size(); ++i) {
+          sortfield[i] |= (palette_in[(i << 2) + 3] << 8);
+        }
+      }
+      break;
+    case LPTS_FIRST:
+      for (size_t i = 0; i < sortfield.size(); ++i) {
+        if (palette_in[(i << 2) + 3] == 255) sortfield[i] |= (1ull << 63);
+      }
+      break;
+  }
+  if (order == LPOS_GLOBAL) {
+    if (direction == LPDS_DESCENDING) {
+      for (size_t i = 0; i < sortfield.size(); ++i) {
+        // flip bits, but preserve original index and transparency mode 2
+        sortfield[i] = (~sortfield[i] & ~(1ull << 63) & ~255)
+                       | (sortfield[i] & (1ull << 63))
+                       | (sortfield[i] & 255);
+      }
+    }
+  } else {
+  unsigned char start = 0;
+  if (direction == LPDS_DESCENDING) {
+    uint64_t value = 0;
+    for (size_t i = 1; i < sortfield.size(); ++i) {
+      if ((sortfield[i] & ~(1ull << 63)) > value) {
+        value = (sortfield[i] & ~(1ull << 63));
+        start = i;
+      }
+    }
+  } else {
+    uint64_t value = UINT64_MAX;
+    for (size_t i = 1; i < sortfield.size(); ++i) {
+      if ((sortfield[i] & ~(1ull << 63)) < value) {
+        value = (sortfield[i] & ~(1ull << 63));
+        start = i;
+      }
+    }
+  }
+  size_t best = start;
+  switch(order) {
+    case LPOS_NONE:
+    case LPOS_GLOBAL:
+      break;
+  case LPOS_NEAREST:
+      for (size_t i = 0; i < sortfield.size() - 1; ++i) {
+        if (i != best) {
+          sortfield[i] ^= sortfield[best];
+          sortfield[best] ^= sortfield[i];
+          sortfield[i] ^= sortfield[best];
+        }
+        sortfield[i] |= (i << 40);
+        const int r = palette_in[((sortfield[i] & 255) << 2) + 0];
+        const int g = palette_in[((sortfield[i] & 255) << 2) + 1];
+        const int b = palette_in[((sortfield[i] & 255) << 2) + 2];
+        const int a = palette_in[((sortfield[i] & 255) << 2) + 3];
+        int bestdist = INT_MAX;
+        for (size_t j = i + 1; j < sortfield.size(); ++j) {
+          const int r2 = palette_in[((sortfield[j] & 255) << 2) + 0];
+          const int g2 = palette_in[((sortfield[j] & 255) << 2) + 1];
+          const int b2 = palette_in[((sortfield[j] & 255) << 2) + 2];
+          int dist = (r - r2) * (r - r2) + (g - g2) * (g - g2)
+                     + (b - b2) * (b - b2);
+          if (transparency == LPTS_SORT) {
+            const int a2 = palette_in[((sortfield[j] & 255) << 2) + 3];
+            dist += (a - a2) * (a - a2);
+          }
+          if (dist < bestdist) {
+            bestdist = dist;
+            best = j;
+          }
+        }
+      }
+      sortfield.back() |= ((sortfield.size() - 1) << 40);
+      break;
+    case LPOS_NEAREST_WEIGHT:
+      for (size_t i = 0; i < sortfield.size() - 1; ++i) {
+        if (i != best) {
+          sortfield[i] ^= sortfield[best];
+          sortfield[best] ^= sortfield[i];
+          sortfield[i] ^= sortfield[best];
+        }
+        sortfield[i] |= (i << 40);
+        const int r = palette_in[((sortfield[i] & 255) << 2) + 0];
+        const int g = palette_in[((sortfield[i] & 255) << 2) + 1];
+        const int b = palette_in[((sortfield[i] & 255) << 2) + 2];
+        const int a = palette_in[((sortfield[i] & 255) << 2) + 3];
+        int bestdist = INT_MAX;
+        for (size_t j = i + 1; j < sortfield.size(); ++j) {
+          const int r2 = palette_in[((sortfield[j] & 255) << 2) + 0];
+          const int g2 = palette_in[((sortfield[j] & 255) << 2) + 1];
+          const int b2 = palette_in[((sortfield[j] & 255) << 2) + 2];
+          int dist = (r - r2) * (r - r2) + (g - g2) * (g - g2)
+                     + (b - b2) * (b - b2);
+          if (transparency == LPTS_SORT) {
+            const int a2 = palette_in[((sortfield[j] & 255) << 2) + 3];
+            dist += (a - a2) * (a - a2);
+          }
+          for (size_t k = 0; k < w * h; ++k) { // TODO inefficient: use a hash/tree
+            if (color_index(&image[k << 2])
+                == color_index(&palette_in[(sortfield[j] & 255) << 2])) {
+              dist += dist;
+            }
+          }
+          if (dist < bestdist) {
+            bestdist = dist;
+            best = j;
+          }
+        }
+      }
+      sortfield.back() |= ((sortfield.size() - 1) << 40);
+      break;
+    case LPOS_NEAREST_NEIGHBOR:
+      for (size_t i = 0; i < sortfield.size() - 1; ++i) {
+        if (i != best) {
+          sortfield[i] ^= sortfield[best];
+          sortfield[best] ^= sortfield[i];
+          sortfield[i] ^= sortfield[best];
+        }
+        sortfield[i] |= (i << 40);
+        const int r = palette_in[((sortfield[i] & 255) << 2) + 0];
+        const int g = palette_in[((sortfield[i] & 255) << 2) + 1];
+        const int b = palette_in[((sortfield[i] & 255) << 2) + 2];
+        const int a = palette_in[((sortfield[i] & 255) << 2) + 3];
+        int bestdist = INT_MAX;
+        for (size_t j = i + 1; j < sortfield.size(); ++j) {
+          const int r2 = palette_in[((sortfield[j] & 255) << 2) + 0];
+          const int g2 = palette_in[((sortfield[j] & 255) << 2) + 1];
+          const int b2 = palette_in[((sortfield[j] & 255) << 2) + 2];
+          int dist = (r - r2) * (r - r2) + (g - g2) * (g - g2)
+                     + (b - b2) * (b - b2);
+          if (transparency == LPTS_SORT) {
+            const int a2 = palette_in[((sortfield[j] & 255) << 2) + 3];
+            dist += (a - a2) * (a - a2);
+          }
+          for (size_t k = 0; k < h; ++k) { // TODO inefficient: use a hash/tree
+            for (size_t l = 0; l < w; ++l) {
+              if (color_index(&image[(k * w + l) << 2])
+                  == color_index(&palette_in[(sortfield[i] & 255) << 2])) {
+                if (k > 0) { // above
+                  if (color_index(&image[((k - 1) * w + l) << 2])
+                      == color_index(&palette_in[(sortfield[j] & 255) << 2])) {
+                     dist += dist;
+                  }
+                }
+                if (k < h - 1) { // below
+                  if (color_index(&image[((k + 1) * w + l) << 2])
+                      == color_index(&palette_in[(sortfield[j] & 255) << 2])) {
+                    dist += dist;
+                  }
+                }
+                if (l > 0) { // left
+                  if (color_index(&image[(k * w + l - 1) << 2])
+                      == color_index(&palette_in[(sortfield[j] & 255) << 2])) {
+                    dist += dist;
+                  }
+                }
+                if (l < w - 1) { // right
+                  if (color_index(&image[(k * w + l + 1) << 2])
+                      == color_index(&palette_in[(sortfield[j] & 255) << 2])) {
+                    dist += dist;
+                  }
+                }
+              }
+            }
+          }
+          if (dist < bestdist) {
+            bestdist = dist;
+            best = j;
+          }
+        }
+      }
+      sortfield.back() |= ((sortfield.size() - 1) << 40);
+      break;
+    }
+  }
+  std::sort(sortfield.begin(), sortfield.end());
+  std::vector<unsigned char> palette_out;
+  for (size_t i = 0; i < mode_out->palettesize; i++) {
+    palette_out.push_back(palette_in[((sortfield[i] & 255) << 2) + 0]);
+    palette_out.push_back(palette_in[((sortfield[i] & 255) << 2) + 1]);
+    palette_out.push_back(palette_in[((sortfield[i] & 255) << 2) + 2]);
+    palette_out.push_back(palette_in[((sortfield[i] & 255) << 2) + 3]);
+  }
+  std::copy(palette_out.begin(), palette_out.end(), palette_in);
+}
+
 /*Automatically chooses color type that gives smallest amount of bits in the
 output image, e.g. grey if there are only greyscale pixels, palette if there
 are less than 256 colors, ...
@@ -5909,6 +6218,11 @@ unsigned lodepng_encode(unsigned char** out, size_t* outsize,
   if(state->encoder.auto_convert)
   {
     state->error = lodepng_auto_choose_color(&info.color, image, w, h, &state->info_raw);
+    if(info.color.colortype == LCT_PALETTE)
+    {
+      optimize_palette(&info.color, image, w, h, state->encoder.palette_priority, state->encoder.palette_direction,
+                      state->encoder.palette_transparency, state->encoder.palette_order);
+    }
   }
   if(state->error) return state->error;
 

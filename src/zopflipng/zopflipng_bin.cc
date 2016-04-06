@@ -127,6 +127,33 @@ void ShowHelp() {
          " trying faster compression with each given type. If this argument is"
          " used, all given filter types are tried with slow compression and the"
          " best result retained.\n"
+         "--palette_priorities=[types]: palette priorities to try:\n"
+         " p: popularity\n"
+         " r: RGB\n"
+         " y: Y'UV\n"
+         " l: L*a*b*\n"
+         " m: MSB\n"
+         " By default, if this argument is not given, all strategies are tried."
+         "\n"
+         "--palette_directions=[types]: palette directions to try:\n"
+         " a: ascending\n"
+         " d: descending\n"
+         " By default, if this argument is not given, all strategies are tried."
+         "\n"
+         "--palette_transparencies=[types]: palette transparencies to try:\n"
+         " i: ignore\n"
+         " s: sort\n"
+         " f: first\n"
+         " By default, if this argument is not given, all strategies are tried."
+         "\n"
+         "--palette_orders=[types]: palette orders to try:\n"
+         " p: none\n"
+         " g: global\n"
+         " d: distance\n"
+         " w: distance, weighted by popularity\n"
+         " n: distance, weighted by neighbor popularity\n"
+         " By default, if this argument is not given, all strategies are tried."
+         "\n"
          "--keepchunks=nAME,nAME,...: keep metadata chunks with these names"
          " that would normally be removed, e.g. tEXt,zTXt,iTXt,gAMA, ... \n"
          " Due to adding extra data, this increases the result size. Keeping"
@@ -219,7 +246,7 @@ int main(int argc, char *argv[]) {
         png_options.verbose = true;
       } else if (name == "--alpha_cleaner") {
         for (size_t j = 0; j < value.size(); j++) {
-          char f = value[j] - '0';
+          signed char f = value[j] - '0';
           if (f >= 0 && f <= 5) {
             png_options.lossy_transparent |= (1 << f);
           } else {
@@ -268,7 +295,66 @@ int main(int argc, char *argv[]) {
           png_options.filter_strategies.push_back(strategy);
         }
       } else if (name == "--zopfli_filters") {
-          png_options.auto_filter_strategy = false;
+        png_options.auto_filter_strategy = false;
+      } else if (name == "--palette_priorities") {
+        for (size_t j = 0; j < value.size(); j++) {
+          ZopfliPNGPalettePriority popularity = kPriorityPopularity;
+          char f = value[j];
+          switch (f) {
+            case 'p': popularity = kPriorityPopularity; break;
+            case 'r': popularity = kPriorityRGB; break;
+            case 'y': popularity = kPriorityYUV; break;
+            case 'l': popularity = kPriorityLab; break;
+            case 'm': popularity = kPriorityMSB; break;
+            default:
+              printf("Unknown palette priority: %c\n", f);
+              return 1;
+          }
+          png_options.palette_priorities.push_back(popularity);
+        }
+      } else if (name == "--palette_directions") {
+        for (size_t j = 0; j < value.size(); j++) {
+          ZopfliPNGPaletteDirection direction = kDirectionAscending;
+          char f = value[j];
+          switch (f) {
+            case 'a': direction = kDirectionAscending; break;
+            case 'd': direction = kDirectionDescending; break;
+            default:
+              printf("Unknown palette direction: %c\n", f);
+              return 1;
+          }
+          png_options.palette_directions.push_back(direction);
+        }
+      } else if (name == "--palette_transparencies") {
+        for (size_t j = 0; j < value.size(); j++) {
+          ZopfliPNGPaletteTransparency transparency = kTransparencyIgnore;
+          char f = value[j];
+          switch (f) {
+            case 'i': transparency = kTransparencyIgnore; break;
+            case 's': transparency = kTransparencySort; break;
+            case 'f': transparency = kTransparencyFirst; break;
+            default:
+              printf("Unknown palette direction: %c\n", f);
+              return 1;
+          }
+          png_options.palette_transparencies.push_back(transparency);
+        }
+      } else if (name == "--palette_orders") {
+        for (size_t j = 0; j < value.size(); j++) {
+          ZopfliPNGPaletteOrder order = kOrderNone;
+          char f = value[j];
+          switch (f) {
+            case 'p': order = kOrderNone; break;
+            case 'g': order = kOrderGlobal; break;
+            case 'd': order = kOrderNearest; break;
+            case 'w': order = kOrderWeight; break;
+            case 'n': order = kOrderNeighbor; break;
+            default:
+              printf("Unknown palette order: %c\n", f);
+              return 1;
+          }
+          png_options.palette_orders.push_back(order);
+        }
       } else if (name == "--keepchunks") {
         bool correct = true;
         if ((value.size() + 1) % 5 != 0) correct = false;
@@ -290,7 +376,7 @@ int main(int argc, char *argv[]) {
       } else if (name == "--ga_max_evaluations") {
         if (num < 0) num = 0;
         png_options.ga_max_evaluations = num;
-    } else if (name == "--ga_stagnate_evaluations") {
+      } else if (name == "--ga_stagnate_evaluations") {
         if (num < 1) num = 1;
         png_options.ga_stagnate_evaluations = num;
       } else if (name == "--ga_mutation_probability") {
