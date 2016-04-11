@@ -48,7 +48,8 @@ enum ZopfliPNGFilterStrategy {
   kStrategyIncremental,
   kStrategyPredefined,
   kStrategyGeneticAlgorithm,
-  kNumFilterStrategies /* Not a strategy but used for the size of this enum */
+  kNumFilterStrategies, /* Not a strategy but used for the size of this enum */
+  kStrategyNA
 };
 
 enum ZopfliPNGPalettePriority {
@@ -57,20 +58,23 @@ enum ZopfliPNGPalettePriority {
   kPriorityYUV,
   kPriorityLab,
   kPriorityMSB,
-  kNumPalettePriorities
+  kNumPalettePriorities,
+  kPriorityNA
 };
 
 enum ZopfliPNGPaletteDirection {
   kDirectionAscending,
   kDirectionDescending,
-  kNumPaletteDirections
+  kNumPaletteDirections,
+  kDirectionNA
 };
 
 enum ZopfliPNGPaletteTransparency {
   kTransparencyIgnore,
   kTransparencySort,
   kTransparencyFirst,
-  kNumPaletteTransparencies
+  kNumPaletteTransparencies,
+  kTransparencyNA
 };
 
 enum ZopfliPNGPaletteOrder {
@@ -119,6 +123,8 @@ typedef struct CZopfliPNGOptions {
   int max_blocks;
 
   int num_stagnations;
+
+  int try_paletteless_size;
 
   int ga_population_size;
 
@@ -203,6 +209,9 @@ struct ZopfliPNGOptions {
 
   // Zopfli number of sequential iterations without improvement
   int num_stagnations;
+
+  // Maximum size after which to try full color image compression on paletted image
+  int try_paletteless_size;
 
   // Genetic algorithm: number of genomes in pool
   int ga_population_size;

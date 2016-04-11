@@ -568,7 +568,7 @@ typedef enum LodePNGFilterStrategy
 
 typedef enum LodePNGPalettePriorityStrategy
 {
-  /*Prioritize by popularity*/
+  /*Prioritize by frequency of color*/
   LPPS_POPULARITY,
   /*Prioritize by RGB color space*/
   LPPS_RGB,

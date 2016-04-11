@@ -41,6 +41,7 @@ ZopfliPNGOptions::ZopfliPNGOptions()
   , block_split_strategy(1)
   , max_blocks(15)
   , num_stagnations(15)
+  , try_paletteless_size(2048)
   , ga_population_size(19)
   , ga_max_evaluations(0)
   , ga_stagnate_evaluations(15)
@@ -71,84 +72,68 @@ unsigned CustomPNGDeflate(unsigned char** out, size_t* outsize,
   return 0;  // OK
 }
 
-// Returns 32-bit integer value for RGBA color.
-static unsigned ColorIndex(const unsigned char* color) {
-  return *(unsigned int*) color;
-}
-
 // Counts amount of colors in the image, up to 257. If transparent_counts_as_one
 // is enabled, any color with alpha channel 0 is treated as a single color with
 // index 0.
-void CountColors(std::set<unsigned>* unique,
-                 const unsigned char* image, unsigned w, unsigned h,
+void CountColors(std::set<uint32_t>* unique,
+                 const uint32_t* image, unsigned w, unsigned h,
                  bool transparent_counts_as_one) {
   unique->clear();
-  for (size_t i = 0; i < w * h; i++) {
-    unsigned index = ColorIndex(&image[i << 2]);
-    if (transparent_counts_as_one && image[(i << 2) + 3] == 0) index = 0;
-    unique->insert(index);
+  for (size_t i = 0; i < w * h; ++i) {
+    unique->insert(transparent_counts_as_one
+                   && ((unsigned char*)&image[i])[3] == 0 ? 0 : image[i]);
     if (unique->size() > 256) break;
   }
 }
 
 // Prepare image for PNG-32 to PNG-24(+tRNS) or PNG-8(+tRNS) reduction.
-void TryColorReduction(lodepng::State* inputstate, unsigned char* image,
-                      unsigned w, unsigned h) {
+void TryColorReduction(lodepng::State* inputstate, uint32_t* image,
+                       unsigned w, unsigned h) {
   // First look for binary (all or nothing) transparency color-key based.
   bool key = true;
-  for (size_t i = 0; i < w * h; i++) {
-    if (image[(i << 2) + 3] > 0 && image[(i << 2) + 3] < 255) {
+  for (size_t i = 0; i < w * h; ++i) {
+    const unsigned char trans = ((unsigned char*)&image[i])[3];
+    if (trans > 0 && trans < 255) {
       key = false;
       break;
     }
   }
-  std::set<unsigned> count;  // Color count, up to 257.
+  std::set<uint32_t> count;  // Color count, up to 257.
   CountColors(&count, image, w, h, true);
   // Less than 257 colors means a palette could be used.
   bool palette = count.size() <= 256;
 
   // Choose the color key or first initial background color.
   if (key || palette) {
-    int r = 0, g = 0, b = 0;
-    for (size_t i = 0; i < w * h; i++) {
-      if (image[(i << 2) + 3] == 0) {
+    uint32_t rgb = 0;
+    for (size_t i = 0; i < w * h; ++i) {
+      if (((unsigned char*)&image[i])[3] == 0) {
         // Use RGB value of first encountered transparent pixel. This can be
         // used as a valid color key, or in case of palette ensures a color
         // existing in the input image palette is used.
-        r = image[(i << 2) + 0];
-        g = image[(i << 2) + 1];
-        b = image[(i << 2) + 2];
+        rgb = image[i];
         break;
       }
     }
-    for (size_t i = 0; i < w * h; i++) {
-      if (image[(i << 2) + 3] == 0) {
-        // if alpha is 0, set the RGB value to the sole color-key.
-        image[(i << 2) + 0] = r;
-        image[(i << 2) + 1] = g;
-        image[(i << 2) + 2] = b;
-      }
+    for (size_t i = 0; i < w * h; ++i) {
+      // if alpha is 0, set the RGB value to the sole color-key.
+      if (((unsigned char*)&image[i])[3] == 0) image[i] = rgb;
     }
-    if (palette) {
       // If there are now less colors, update palette of input image to match
       // this.
-      if (palette && inputstate->info_png.color.palettesize > 0) {
-        CountColors(&count, image, w, h, false);
-        if (count.size() < inputstate->info_png.color.palettesize) {
-          std::vector<unsigned char> palette_out;
-          unsigned char* palette_in = inputstate->info_png.color.palette;
-          for (size_t i = 0; i < inputstate->info_png.color.palettesize; i++) {
-            if (count.count(ColorIndex(&palette_in[i << 2])) != 0) {
-              palette_out.push_back(palette_in[(i << 2) + 0]);
-              palette_out.push_back(palette_in[(i << 2) + 1]);
-              palette_out.push_back(palette_in[(i << 2) + 2]);
-              palette_out.push_back(palette_in[(i << 2) + 3]);
-            }
+    if (palette && inputstate->info_png.color.palettesize > 0) {
+      CountColors(&count, image, w, h, false);
+      if (count.size() < inputstate->info_png.color.palettesize) {
+        std::vector<uint32_t> palette_out;
+        uint32_t* palette_in = (uint32_t*)(inputstate->info_png.color.palette);
+        for (size_t i = 0; i < inputstate->info_png.color.palettesize; i++) {
+          if (count.count(palette_in[i]) != 0) {
+            palette_out.push_back(palette_in[i]);
           }
-          inputstate->info_png.color.palettesize = (palette_out.size() >> 2);
-          std::copy(palette_in, palette_in + palette_out.size(),
-                    palette_out.begin());
         }
+        inputstate->info_png.color.palettesize = palette_out.size();
+        std::copy(palette_in, palette_in + palette_out.size(),
+                  palette_out.begin());
       }
     }
   }
@@ -156,259 +141,203 @@ void TryColorReduction(lodepng::State* inputstate, unsigned char* image,
 
 // Remove RGB information from pixels with alpha=0 (does the same job as
 // cryopng)
-unsigned LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
+void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
                                   int cleaner) {
-  unsigned changes = 0;
-  if (cleaner & 1) {  // None filter
-    for (size_t i = 0; i < w * h; i++) {
-      if (image[(i << 2) + 3] == 0) {
+  int pre = 0, pgr = 0, pbl = 0;
+  uint32_t* image_int = (uint32_t*)image;
+  switch (cleaner) {
+    case 1: // None filter
+      for (size_t i = 0; i < w * h; ++i) {
         // if alpha is 0, set the RGB values to zero (black).
-        if (changes == 0 && (image[(i << 2) + 0] != 0
-            || image[(i << 2) + 1] != 0
-            || image[(i << 2) + 2] != 0)) changes = 1;
-        image[(i << 2) + 0] = 0;
-        image[(i << 2) + 1] = 0;
-        image[(i << 2) + 2] = 0;
+        if (image[(i << 2) + 3] == 0) image_int[i] = 0;
       }
-    }
-  } else if (cleaner & 2) {  // Sub filter
-    int pr = 0;
-    int pg = 0;
-    int pb = 0;
-    for (size_t i = 0; i < ((w << 2) * h); ) {
-      for (size_t j = 3; j < (w << 2);) {
-        // if alpha is 0, set the RGB values to those of the pixel on the left.
-        if (image[i + j] == 0) {
-          if (changes == 0 && (image[i + j - 3] != pr || image[i + j - 2] != pg
-              || image[i + j - 1] != pb)) changes = 1;
-          image[i + j - 3] = pr;
-          image[i + j - 2] = pg;
-          image[i + j - 1] = pb;
-        } else {
-          // Use the last encountered RGB value.
-          pr = image[i + j - 3];
-          pg = image[i + j - 2];
-          pb = image[i + j - 1];
-        }
-        j += 4;
-      }
-      if (w > 1)
-      {
-        for (size_t j = ((w - 2) << 2) + 3; j + 1 > 0;) {
+      break;
+    case 2: // Sub filter
+      for (size_t i = 0; i < ((w << 2) * h); i += (w << 2)) {
+        for (size_t j = 3; j < (w << 2); j += 4) {
           // if alpha is 0, set the RGB values to those of the pixel on the
-          // right.
+          // left.
           if (image[i + j] == 0) {
-            if (changes == 0 && (image[i + j - 3] != pr
-                || image[i + j - 2] != pg
-                || image[i + j - 1] != pb)) changes = 1;
-            image[i + j - 3] = pr;
-            image[i + j - 2] = pg;
-            image[i + j - 1] = pb;
+            image[i + j - 3] = pre;
+            image[i + j - 2] = pgr;
+            image[i + j - 1] = pbl;
           } else {
             // Use the last encountered RGB value.
-            pr = image[i + j - 3];
-            pg = image[i + j - 2];
-            pb = image[i + j - 1];
-          }
-          j -= 4;
-        }
-      }
-      i += (w << 2);
-      pr = pg = pb = 0;   // reset to zero at each new line
-    }
-  } else if (cleaner & 4) {  // Up filter
-    for (size_t j = 3; j < (w << 2);) {
-      // if alpha is 0, set the RGB values to zero (black), first line only.
-      if (image[j] == 0) {
-        if (changes == 0 && (image[j - 3] != 0 || image[j - 2] != 0
-            || image[j - 1] != 0)) changes = 1;
-        image[j - 3] = 0;
-        image[j - 2] = 0;
-        image[j - 1] = 0;
-      }
-      j += 4;
-    }
-    if (h > 1) {
-      for (size_t j = 3; j < (w << 2);) {
-        for (size_t i = (w << 2); i < ((w << 2) * h); ) {
-          // if alpha is 0, set the RGB values to those of the upper pixel.
-          if (image[i + j] == 0) {
-            if (changes == 0 && (image[i + j - 3] != image[i + j - 3 - (w << 2)]
-                || image[i + j - 2] != image[i + j - 2 - (w << 2)]
-                || image[i + j - 1] != image[i + j - 1 - (w << 2)])) {
-              changes = 1;
-            }
-            image[i + j - 3] = image[i + j - 3 - (w << 2)];
-            image[i + j - 2] = image[i + j - 2 - (w << 2)];
-            image[i + j - 1] = image[i + j - 1 - (w << 2)];
-          }
-          i += (w << 2);
-        }
-        for (size_t i = (w << 2) * (h - 2); i + (w << 2) > 0;) {
-          // if alpha is 0, set the RGB values to those of the lower pixel.
-          if (image[i + j] == 0) {
-            if (changes == 0 && (image[i + j - 3] != image[i + j - 3 + (w << 2)]
-                || image[i + j - 2] != image[i + j - 2 + (w << 2)]
-                || image[i + j - 1] != image[i + j - 1 + (w << 2)])) {
-              changes = 1;
-            }
-            image[i + j - 3] = image[i + j - 3 + (w << 2)];
-            image[i + j - 2] = image[i + j - 2 + (w << 2)];
-            image[i + j - 1] = image[i + j - 1 + (w << 2)];
-          }
-          i -= (w << 2);
-        }
-        j += 4;
-      }
-    }
-  } else if (cleaner & 8) {  // Average filter
-    int pr = 0;
-    int pg = 0;
-    int pb = 0;
-    for (size_t j = 3; j < (w << 2);) {
-      // if alpha is 0, set the RGB values to the half of those of the pixel on
-      // the left, first line only.
-      if (image[j] == 0) {
-        pr = pr >> 1;
-        pg = pg >> 1;
-        pb = pb >> 1;
-        if (changes == 0 && (image[j - 3] != pr || image[j - 2] != pg
-            || image[j - 1] != pb)) changes = 1;
-        image[j - 3] = pr;
-        image[j - 2] = pg;
-        image[j - 1] = pb;
-      } else {
-        pr = image[j - 3];
-        pg = image[j - 2];
-        pb = image[j - 1];
-      }
-      j +=  4;
-    }
-    if (h > 1) {
-      for (size_t i = (w << 2); i < ((w << 2) * h); ) {
-        pr = pg = pb = 0;   // reset to zero at each new line
-        for (size_t j = 3; j < (w << 2);) {
-          // if alpha is 0, set the RGB values to the half of the sum of the
-          // pixel on the left and the upper pixel.
-          if (image[i + j] == 0) {
-            pr = (pr + (int)image[i + j - (3 + (w << 2))]) >> 1;
-            pg = (pg + (int)image[i + j - (2 + (w << 2))]) >> 1;
-            pb = (pb + (int)image[i + j - (1 + (w << 2))]) >> 1;
-            if (changes == 0 && (image[i + j - 3] != pr
-                || image[i + j - 2] != pg
-                || image[i + j - 1] != pb)) changes = 1;
-            image[i + j - 3] = pr;
-            image[i + j - 2] = pg;
-            image[i + j - 1] = pb;
-          } else {
-            pr = image[i + j - 3];
-            pg = image[i + j - 2];
-            pb = image[i + j - 1];
-          }
-          j += 4;
-        }
-        i += (w << 2);
-      }
-    }
-  } else if (cleaner & 16) {  // Paeth filter
-    int pre = 0;
-    int pgr = 0;
-    int pbl = 0;
-    for (size_t j = 3; j < (w << 2);) {  // First line (border effects)
-      // if alpha is 0, alter the RGB value to a possibly more efficient one.
-      if (image[j] == 0) {
-        if (changes == 0 && (image[j - 3] != pre || image[j - 2] != pgr
-            || image[j - 1] != pbl)) changes = 1;
-        image[j - 3] = pre;
-        image[j - 2] = pgr;
-        image[j - 1] = pbl;
-      } else {
-        pre = image[j - 3];
-        pgr = image[j - 2];
-        pbl = image[j - 1];
-      }
-      j += 4;
-    }
-    if (h > 1) {
-      int a, b, c, pa, pb, pc, p;
-      for (size_t i = (w << 2); i < ((w << 2) * h); ) {
-        pre = pgr = pbl = 0;   // reset to zero at each new line
-        for (size_t j = 3; j < (w << 2);) {
-          // if alpha is 0, set the RGB values to the Paeth predictor.
-          if (image[i + j] == 0) {
-            if (j != 3) {  // not in first column
-              a = pre;
-              b = (int)image[i + j - (3 + (w << 2))];
-              c = (int)image[i + j - (7 + (w << 2))];
-              p = b - c;
-              pc = a - c;
-              pa = abs(p);
-              pb = abs(pc);
-              pc = abs(p + pc);
-              pre = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
-
-              a = pgr;
-              b = (int)image[i + j - (2 + (w << 2))];
-              c = (int)image[i + j - (6 + (w << 2))];
-              p = b - c;
-              pc = a - c;
-              pa = abs(p);
-              pb = abs(pc);
-              pc = abs(p + pc);
-              pgr = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
-
-              a = pbl;
-              b = (int)image[i + j - (1 + (w << 2))];
-              c = (int)image[i + j - (5 + (w << 2))];
-              p = b - c;
-              pc = a - c;
-              pa = abs(p);
-              pb = abs(pc);
-              pc = abs(p + pc);
-              pbl = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
-
-              if (changes == 0 && (image[i + j - 3] != pre
-                  || image[i + j - 2] != pgr
-                  || image[i + j - 1] != pbl)) changes = 1;
-              image[i + j - 3] = pre;
-              image[i + j - 2] = pgr;
-              image[i + j - 1] = pbl;
-            } else {
-              // first column, set the RGB values to those of the upper pixel.
-              pre = (int)image[i + j - (3 + (w << 2))];
-              pgr = (int)image[i + j - (2 + (w << 2))];
-              pbl = (int)image[i + j - (1 + (w << 2))];
-              if (changes == 0 && (image[i + j - 3] != pre
-                  || image[i + j - 2] != pgr
-                  || image[i + j - 1] != pbl)) changes = 1;
-              image[i + j - 3] = pre;
-              image[i + j - 2] = pgr;
-              image[i + j - 1] = pbl;
-            }
-          } else {
             pre = image[i + j - 3];
             pgr = image[i + j - 2];
             pbl = image[i + j - 1];
           }
-          j += 4;
         }
-        i += (w << 2);
+        if (w > 1) {
+          for (size_t j = ((w - 2) << 2) + 3; j + 1 > 0; j -= 4) {
+            // if alpha is 0, set the RGB values to those of the pixel on the
+            // right.
+            if (image[i + j] == 0) {
+              image[i + j - 3] = pre;
+              image[i + j - 2] = pgr;
+              image[i + j - 1] = pbl;
+            } else {
+              // Use the last encountered RGB value.
+              pre = image[i + j - 3];
+              pgr = image[i + j - 2];
+              pbl = image[i + j - 1];
+            }
+          }
+        }
+        pre = pgr = pbl = 0;   // reset to zero at each new line
       }
-    }
-  } else if (cleaner & 32) {  // None filter (white)
-    for (size_t i = 0; i < w * h; i++) {
-      if (image[(i << 2) + 3] == 0) {
-        // if alpha is 0, set the RGB values to 255 (white).
-        if (changes == 0 && (image[(i << 2) + 0] != 255
-            || image[(i << 2) + 1] != 255
-            || image[(i << 2) + 2] != 255)) changes = 1;
-        image[(i << 2) + 0] = 255;
-        image[(i << 2) + 1] = 255;
-        image[(i << 2) + 2] = 255;
+      break;
+    case 3: // Up filter
+      for (size_t j = 3; j < (w << 2); j += 4) {
+        // if alpha is 0, set the RGB values to zero (black), first line only.
+        if (image[j] == 0) {
+          image[j - 3] = 0;
+          image[j - 2] = 0;
+          image[j - 1] = 0;
+        }
       }
-    }
+      if (h > 1) {
+        for (size_t j = 3; j < (w << 2); j += 4) {
+          for (size_t i = (w << 2); i < ((w << 2) * h); i += (w << 2)) {
+            // if alpha is 0, set the RGB values to those of the upper pixel.
+            if (image[i + j] == 0) {
+              image[i + j - 3] = image[i + j - 3 - (w << 2)];
+              image[i + j - 2] = image[i + j - 2 - (w << 2)];
+              image[i + j - 1] = image[i + j - 1 - (w << 2)];
+            }
+          }
+          for (size_t i = (w << 2) * (h - 2); i + (w << 2) > 0; i -= (w << 2)) {
+            // if alpha is 0, set the RGB values to those of the lower pixel.
+            if (image[i + j] == 0) {
+              image[i + j - 3] = image[i + j - 3 + (w << 2)];
+              image[i + j - 2] = image[i + j - 2 + (w << 2)];
+              image[i + j - 1] = image[i + j - 1 + (w << 2)];
+            }
+          }
+        }
+      }
+      break;
+    case 4: // Average filter
+      for (size_t j = 3; j < (w << 2); j += 4) {
+        // if alpha is 0, set the RGB values to the half of those of the pixel
+        // on the left, first line only.
+        if (image[j] == 0) {
+          pre = pre >> 1;
+          pgr = pgr >> 1;
+          pbl = pbl >> 1;
+          image[j - 3] = pre;
+          image[j - 2] = pgr;
+          image[j - 1] = pbl;
+        } else {
+          pre = image[j - 3];
+          pgr = image[j - 2];
+          pbl = image[j - 1];
+        }
+      }
+      if (h > 1) {
+        for (size_t i = (w << 2); i < ((w << 2) * h); i += (w << 2)) {
+          pre = pgr = pbl = 0;   // reset to zero at each new line
+          for (size_t j = 3; j < (w << 2); j += 4) {
+            // if alpha is 0, set the RGB values to the half of the sum of the
+            // pixel on the left and the upper pixel.
+            if (image[i + j] == 0) {
+              pre = (pre + (int)image[i + j - (3 + (w << 2))]) >> 1;
+              pgr = (pgr + (int)image[i + j - (2 + (w << 2))]) >> 1;
+              pbl = (pbl + (int)image[i + j - (1 + (w << 2))]) >> 1;
+              image[i + j - 3] = pre;
+              image[i + j - 2] = pgr;
+              image[i + j - 1] = pbl;
+            } else {
+              pre = image[i + j - 3];
+              pgr = image[i + j - 2];
+              pbl = image[i + j - 1];
+            }
+          }
+        }
+      }
+    case 5: // Paeth filter
+      for (size_t j = 3; j < (w << 2); j += 4) {  // First line (border effects)
+        // if alpha is 0, alter the RGB value to a possibly more efficient one.
+        if (image[j] == 0) {
+          image[j - 3] = pre;
+          image[j - 2] = pgr;
+          image[j - 1] = pbl;
+        } else {
+          pre = image[j - 3];
+          pgr = image[j - 2];
+          pbl = image[j - 1];
+        }
+      }
+      if (h > 1) {
+        int a, b, c, pa, pb, pc, p;
+        for (size_t i = (w << 2); i < ((w << 2) * h); i += (w << 2)) {
+          pre = pgr = pbl = 0;   // reset to zero at each new line
+          for (size_t j = 3; j < (w << 2); j += 4) {
+            // if alpha is 0, set the RGB values to the Paeth predictor.
+            if (image[i + j] == 0) {
+              if (j != 3) {  // not in first column
+                a = pre;
+                b = (int)image[i + j - (3 + (w << 2))];
+                c = (int)image[i + j - (7 + (w << 2))];
+                p = b - c;
+                pc = a - c;
+                pa = abs(p);
+                pb = abs(pc);
+                pc = abs(p + pc);
+                pre = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
+
+                a = pgr;
+                b = (int)image[i + j - (2 + (w << 2))];
+                c = (int)image[i + j - (6 + (w << 2))];
+                p = b - c;
+                pc = a - c;
+                pa = abs(p);
+                pb = abs(pc);
+                pc = abs(p + pc);
+                pgr = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
+
+                a = pbl;
+                b = (int)image[i + j - (1 + (w << 2))];
+                c = (int)image[i + j - (5 + (w << 2))];
+                p = b - c;
+                pc = a - c;
+                pa = abs(p);
+                pb = abs(pc);
+                pc = abs(p + pc);
+                pbl = (pa <= pb && pa <=pc) ? a : (pb <= pc) ? b : c;
+
+                image[i + j - 3] = pre;
+                image[i + j - 2] = pgr;
+                image[i + j - 1] = pbl;
+              } else {
+                // first column, set the RGB values to those of the upper pixel.
+                pre = (int)image[i + j - (3 + (w << 2))];
+                pgr = (int)image[i + j - (2 + (w << 2))];
+                pbl = (int)image[i + j - (1 + (w << 2))];
+                image[i + j - 3] = pre;
+                image[i + j - 2] = pgr;
+                image[i + j - 1] = pbl;
+              }
+            } else {
+              pre = image[i + j - 3];
+              pgr = image[i + j - 2];
+              pbl = image[i + j - 1];
+            }
+          }
+        }
+      }
+      break;
+    case 6: // None filter (white)
+      for (size_t i = 0; i < w * h; i += 4) {
+        if (image[i + 3] == 0) {
+          // if alpha is 0, set the RGB values to 255 (white).
+          image[i] = 255;
+          image[i + 1] = 255;
+          image[i + 2] = 255;
+        }
+      }
+      break;
   }
-  return changes;
 }
 
 // Tries to optimize given a single PNG filter strategy.
@@ -423,9 +352,9 @@ unsigned TryOptimize(
     ZopfliPNGPaletteTransparency palette_transparency,
     ZopfliPNGPaletteOrder palette_order,
     bool use_zopfli, int windowsize, const ZopfliPNGOptions* png_options,
-    std::vector<unsigned char>* out, unsigned char* filterbank) {
+    std::vector<unsigned char>* out, unsigned char* filterbank,
+    lodepng::State& outputstate) {
   unsigned error = 0;
-
   lodepng::State state;
   state.encoder.verbose = png_options->verbose;
   state.encoder.zlibsettings.windowsize = windowsize;
@@ -573,37 +502,40 @@ unsigned TryOptimize(
   state.encoder.text_compression = 1;
 
   error = lodepng::encode(*out, image, w, h, state);
+  if (!error) {
+    std::vector<unsigned char> temp;
+    error = lodepng::decode(temp, w, h, outputstate, *out);
+  }
 
   // For very small output, also try without palette, it may be smaller thanks
   // to no palette storage overhead.
-  if (!error && out->size() < 4096 && !keep_colortype && try_paletteless) {
-    lodepng::State teststate;
-    std::vector<unsigned char> temp;
-    lodepng::decode(temp, w, h, teststate, *out);
-    if (teststate.info_png.color.colortype == LCT_PALETTE) {
-      if (png_options->verbose) {
-        printf("Palette was used,"
-               " compressed result is small enough to also try RGB or grey.\n");
-      }
-      LodePNGColorProfile profile;
-      lodepng_color_profile_init(&profile);
-      lodepng_get_color_profile(&profile, &image[0], w, h, &state.info_raw);
-      // Too small for tRNS chunk overhead.
-      if (w * h <= 16 && profile.key) profile.alpha = 1;
-      state.encoder.auto_convert = 0;
-      state.info_png.color.colortype = (profile.alpha ? LCT_RGBA : LCT_RGB);
-      state.info_png.color.bitdepth = 8;
-      state.info_png.color.key_defined = (profile.key && !profile.alpha);
-      if (state.info_png.color.key_defined) {
-        state.info_png.color.key_defined = 1;
-        state.info_png.color.key_r = (profile.key_r & 255u);
-        state.info_png.color.key_g = (profile.key_g & 255u);
-        state.info_png.color.key_b = (profile.key_b & 255u);
-      }
+  if (!error && out->size() < (unsigned) png_options->try_paletteless_size
+      && !keep_colortype && try_paletteless
+      && outputstate.info_png.color.colortype == LCT_PALETTE) {
+    if (png_options->verbose) {
+      printf("Palette was used,"
+             " compressed result is small enough to also try RGB or grey.\n");
+    }
+    LodePNGColorProfile profile;
+    lodepng_color_profile_init(&profile);
+    lodepng_get_color_profile(&profile, &image[0], w, h, &state.info_raw);
+    // Too small for tRNS chunk overhead.
+    if (w * h <= 16 && profile.key) profile.alpha = 1;
+    state.encoder.auto_convert = 0;
+    state.info_png.color.colortype = (profile.alpha ? LCT_RGBA : LCT_RGB);
+    state.info_png.color.bitdepth = 8;
+    state.info_png.color.key_defined = (profile.key && !profile.alpha);
+    if (state.info_png.color.key_defined) {
+      state.info_png.color.key_defined = 1;
+      state.info_png.color.key_r = (profile.key_r & 255u);
+      state.info_png.color.key_g = (profile.key_g & 255u);
+      state.info_png.color.key_b = (profile.key_b & 255u);
+    }
 
-      std::vector<unsigned char> out2;
-      error = lodepng::encode(out2, image, w, h, state);
-      if (out2.size() < out->size()) out->swap(out2);
+    std::vector<unsigned char> out2;
+    error = lodepng::encode(out2, image, w, h, state);
+    if (!error && out2.size() < out->size()) {
+      out->swap(out2);
     }
   }
 
@@ -677,9 +609,9 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     kStrategyPredefined, kStrategyGeneticAlgorithm
   };
   std::string strategy_name[kNumFilterStrategies] = {
-    "zero", "one", "two", "three", "four", "minimum sum", "distinct bytes",
-    "distinct bigrams", "entropy", "brute force", "incremental brute force",
-    "predefined", "genetic algorithm"
+    "zero", "one", "two", "three", "four", "minimum_sum", "distinct_bytes",
+    "distinct_bigrams", "entropy", "brute_force", "incremental_brute_force",
+    "predefined", "genetic_algorithm"
   };
   ZopfliPNGPalettePriority palette_priorities[kNumPalettePriorities] = {
     kPriorityPopularity, kPriorityRGB, kPriorityYUV, kPriorityLab, kPriorityMSB
@@ -693,7 +625,8 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
   std::string direction_name[kNumPaletteDirections] = {
     "ascending", "descending"
   };
-  ZopfliPNGPaletteTransparency palette_transparencies[kNumPaletteTransparencies] = {
+  ZopfliPNGPaletteTransparency palette_transparencies[kNumPaletteTransparencies]
+      = {
     kTransparencyIgnore, kTransparencySort, kTransparencyFirst
   };
   std::string transparency_name[kNumPaletteTransparencies] = {
@@ -703,7 +636,10 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     kOrderNone, kOrderGlobal, kOrderNearest, kOrderWeight, kOrderNeighbor
   };
   std::string order_name[kNumPaletteOrders] = {
-    "none", "global", "nearest", "nearest weighted", "nearest neighbor"
+    "predefined", "global", "nearest", "nearest_weighted", "nearest_neighbor"
+  };
+  std::string cleaner_name[7] = {
+    "none", "black", "horizontal", "vertical", "average", "paeth", "white"
   };
   const int pre_predefined = 10;
   unsigned strategy_enable = 0;
@@ -801,6 +737,7 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     bit16 = true;
   }
 
+  std::vector<std::vector<unsigned char>> images;
   if (!error) {
     std::vector<unsigned char> filter;
     std::vector<unsigned char> temp;
@@ -810,15 +747,14 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     }
     size_t bestsize = SIZE_MAX;
     unsigned bestcleaner = 0;
-    unsigned bestpriority = 0;
-    unsigned bestdirection = 0;
-    unsigned besttranparency = 0;
-    unsigned bestorder = 0;
+    lodepng::State beststate;
 
     unsigned numcleaners = 1;
     if (!bit16 && png_options.lossy_transparent > 0) {
-      TryColorReduction(&inputstate, &image[0], w, h);
+      TryColorReduction(&inputstate, (uint32_t*)&image[0], w, h);
     }
+    lodepng_color_mode_copy(&beststate.info_png.color,
+                            &inputstate.info_png.color);
 
     bool has_transparent = false;
     for (size_t i = 0; i < w * h; i++) {
@@ -828,19 +764,40 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
       }
     }
     if (!has_transparent) {
-      palette_transparency_enable = (1 << kTransparencyIgnore);
-    } else if (!bit16 && png_options.lossy_transparent > 0) numcleaners = 6;
+      palette_transparency_enable = 1 << kTransparencyIgnore;
+    } else if (!bit16 && png_options.lossy_transparent > 0) numcleaners = 7;
 
+    std::set<unsigned> count1;
+    CountColors(&count1, (uint32_t*)&image[0], w, h, false);
+
+    std::vector<unsigned char> orig_image = image;
     for (unsigned j = 0; j < numcleaners; ++j) {
-      unsigned cleaner = (1 << j);
+      unsigned cleaner = 1 << j;
+      unsigned realj = j;
+      // If lossy_transparent, remove RGB information from pixels with alpha=0
       if (png_options.lossy_transparent > 0 && has_transparent) {
-        // If lossy_transparent, remove RGB information from pixels with alpha=0
-        if (png_options.lossy_transparent & cleaner) {
-          if (verbose) printf("Cleaning alpha using method %i\n", j);
-          if (LossyOptimizeTransparent(&image[0], w, h, cleaner) == 0
-              && cleaner > 1) continue;
+        if (!(png_options.lossy_transparent & cleaner)) continue;
+        image = orig_image;
+        LossyOptimizeTransparent(&image[0], w, h, j);
+        if (count1.size() <= 256) {
+          std::set<unsigned> count2;
+          CountColors(&count2, (uint32_t*)&image[0], w, h, false);
+          if (count2.size() > 256) {
+            if (j == numcleaners - 1 && images.size() == 0) {
+              images.push_back(orig_image);
+              realj = 0;
+            } else continue;
+          }
         }
-        else continue;
+        bool duplicate = false;
+        for (size_t i = 0; i < images.size(); ++i) {
+          if (images[i] == image) {
+            duplicate = true;
+            break;
+          }
+        }
+        if (duplicate) continue;
+        images.push_back(image);
       }
 
       unsigned numpriorities = kNumPalettePriorities;
@@ -849,15 +806,19 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
       unsigned numorders = kNumPaletteOrders;
       // Check whether image can be paletted
       std::set<unsigned> count;
-      CountColors(&count, &image[0], w, h, false);
+      CountColors(&count, (uint32_t*)&image[0], w, h, false);
       if (count.size() > 256) {
-        numpriorities = 1; palette_priority_enable = (1 << kPriorityPopularity);
-        numdirections = 1; palette_direction_enable = (1 << kDirectionDescending);
-        numtransparencies = 1; palette_transparency_enable = (1 << kTransparencyIgnore);
-        numorders = 1; palette_order_enable = (1 << kOrderNone);
+        numpriorities = 1;
+        palette_priority_enable = 1;
+        numdirections = 1;
+        palette_direction_enable = 1;
+        numtransparencies = 1;
+        palette_transparency_enable = 1;
+        numorders = 1;
+        palette_order_enable = 1 << kOrderNone;
       }
       bool none_done = false;
-
+      bool first_filter = true;
       bool try_paletteless = true;
       for (unsigned pp = 0; pp < numpriorities; ++pp) {
         if (!(palette_priority_enable & (1 << pp))) continue;
@@ -867,7 +828,7 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
             if (!(palette_transparency_enable & (1 << pt))) continue;
             for (unsigned po = 0; po < numorders; ++po) {
               if (!(palette_order_enable & (1 << po))) continue;
-              if (palette_order_enable == (1 << kOrderNone)) {
+              if (palette_orders[po] == kOrderNone) {
                 if (none_done) continue;
                 none_done = true;
               }
@@ -879,7 +840,8 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
                                                png_options.ga_population_size));
                 lodepng::randomFilter(filterbank);
               }
-
+              first_filter = true;
+              lodepng::State state;
               for (int i = 0; i < kNumFilterStrategies; ++i) {
                 if (!(strategy_enable & (1 << i))) continue;
                 temp.clear();
@@ -887,27 +849,47 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
                 // PNG filter strategy gives the smallest output. This allows to
                 // then do the slow and good compression only on that filter
                 // type.
+                if (verbose) {
+                  if (png_options.lossy_transparent & cleaner
+                      && has_transparent) {
+                    printf("Cleaner %s ", cleaner_name[realj].c_str());
+                  }
+                  if (count.size() <= 256) {
+                    printf("Palette ");
+                    if (po != kOrderNone) {
+                      printf("%s %s ", priority_name[pp].c_str(),
+                             direction_name[pd].c_str());
+                      if (has_transparent) {
+                        printf("%s ", transparency_name[pt].c_str());
+                      }
+                    }
+                    printf("%s ", order_name[po].c_str());
+                  }
+                  printf("Filter %s", strategy_name[i].c_str());
+                }
                 error = TryOptimize(image, w, h, inputstate, bit16,
-                                    keep_colortype, try_paletteless, origpng,
-                                    filterstrategies[i], palette_priorities[pp],
+                                    first_filter ? keep_colortype
+                                    : state.info_png.color.colortype
+                                      == LCT_PALETTE,
+                                    try_paletteless, origpng,
+                                    filterstrategies[i],
+                                    palette_priorities[pp],
                                     palette_directions[pd],
                                     palette_transparencies[pt],
-                                    palette_orders[po],
+                                    first_filter ? palette_orders[po]
+                                                 : kOrderNone,
                                     !png_options.auto_filter_strategy
-                                    /* use_zopfli */, windowsize, &png_options,
-                                    &temp, &filterbank[0]);
-                try_paletteless = false;
-                if (!error) {
-                  if (verbose) {
-                    if (count.size() <= 256) {
-                      printf("Palette %s %s %s %s ", priority_name[pp].c_str(),
-                             direction_name[pd].c_str(),
-                             transparency_name[pt].c_str(),
-                             order_name[po].c_str());
-                    }
-                    printf("Filter %s: %d bytes\n",
-                           strategy_name[i].c_str(), (int) temp.size());
+                                    /* use_zopfli */, windowsize,
+                                    &png_options, &temp, &filterbank[0], state);
+                if (first_filter) {
+                  if (state.info_png.color.colortype == LCT_PALETTE) {
+                    lodepng_color_mode_copy(&inputstate.info_png.color,
+                                            &state.info_png.color);
                   }
+                  first_filter = false;
+                }
+                if (!error) {
+                  if (verbose) printf(": %d bytes\n", (int) temp.size());
                   if ((strategy_enable & (1 << kStrategyPredefined)
                       && i <= pre_predefined)
                       || strategy_enable & (1 << kStrategyGeneticAlgorithm)) {
@@ -925,15 +907,16 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
                   }
                   if (temp.size() < bestsize) {
                     bestsize = temp.size();
-                    bestcleaner = cleaner;
-                    bestpriority = pp;
-                    bestdirection = pd;
-                    besttranparency = pt;
-                    bestorder = po;
+                    if (state.info_png.color.colortype == LCT_PALETTE) {
+                      lodepng_color_mode_copy(&beststate.info_png.color,
+                                              &state.info_png.color);
+                    }
+                    bestcleaner = images.size();
                     // Store best result so far in the output.
                     (*resultpng).swap(temp);
                   }
                 }
+                try_paletteless = false;
               }
             }
           }
@@ -942,16 +925,15 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     }
     if (png_options.auto_filter_strategy) {
       temp.clear();
-      if (png_options.lossy_transparent > 0) {
-        LossyOptimizeTransparent(&image[0], w, h, bestcleaner);
+      if (png_options.lossy_transparent > 0 && has_transparent) {
+        image.swap(images[bestcleaner - 1]);
       }
-      error = TryOptimize(image, w, h, inputstate, bit16, keep_colortype,
+      error = TryOptimize(image, w, h, beststate, bit16,
+                          true /* keep_colortype */,
                           true /* try_paletteless */, *resultpng,
-                          kStrategyPredefined, palette_priorities[bestpriority],
-                          palette_directions[bestdirection],
-                          palette_transparencies[besttranparency],
-                          palette_orders[bestorder], true /* use_zopfli */,
-                          windowsize, &png_options, &temp, NULL);
+                          kStrategyPredefined, kPriorityNA, kDirectionNA,
+                          kTransparencyNA, kOrderNone, true /* use_zopfli */,
+                          windowsize, &png_options, &temp, NULL, beststate);
       if (!error && temp.size() < bestsize) (*resultpng).swap(temp);
     }
   }
@@ -980,6 +962,7 @@ extern "C" void CZopfliPNGSetDefaults(CZopfliPNGOptions* png_options) {
   png_options->block_split_strategy     = opts.block_split_strategy;
   png_options->max_blocks               = opts.max_blocks;
   png_options->num_stagnations          = opts.num_stagnations;
+  png_options->try_paletteless_size     = opts.try_paletteless_size;
   png_options->ga_population_size       = opts.ga_population_size;
   png_options->ga_max_evaluations       = opts.ga_max_evaluations;
   png_options->ga_stagnate_evaluations  = opts.ga_stagnate_evaluations;
@@ -1006,6 +989,7 @@ extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
   opts.block_split_strategy     = png_options->block_split_strategy;
   opts.max_blocks               = png_options->max_blocks;
   opts.num_stagnations          = png_options->num_stagnations;
+  opts.try_paletteless_size     = png_options->try_paletteless_size;
   opts.ga_population_size       = png_options->ga_population_size;
   opts.ga_max_evaluations       = png_options->ga_max_evaluations;
   opts.ga_stagnate_evaluations  = png_options->ga_stagnate_evaluations;

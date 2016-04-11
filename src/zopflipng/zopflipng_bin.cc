@@ -89,8 +89,6 @@ void ShowHelp() {
          " considered as output from previous runs. This is handy when using"
          " *.png wildcard expansion with multiple runs.\n"
          "-y: do not ask about overwriting files.\n"
-         "--alpha_cleaner=[0-5]: remove colors behind alpha channel 0. No"
-         " visual difference, removes hidden information, based on cryopng.\n"
          "--lossy_8bit: convert 16-bit per channel image to 8-bit per"
          " channel.\n"
          "-d: dry run: don't save any files, just see the console output"
@@ -109,6 +107,14 @@ void ShowHelp() {
          " unlimited, but this can give extreme results that hurt compression"
          " on some files). Default: 15\n"
          "--splitting=[0-3]: ignored, left for backwards compatibility\n"
+         "--alpha_cleaners=[types]: remove colors behind alpha channel 0. No"
+         " visual difference, removes hidden information.\n"
+         " b: black\n"
+         " h: horizontal\n"
+         " v: vertical\n"
+         " a: average\n"
+         " p: paeth\n"
+         " w: white\n"
          "--filters=[types]: filter strategies to try:\n"
          " 0-4: give all scanlines PNG filter type 0-4\n"
          " m: minimum sum\n"
@@ -154,6 +160,9 @@ void ShowHelp() {
          " n: distance, weighted by neighbor popularity\n"
          " By default, if this argument is not given, all strategies are tried."
          "\n"
+         "--try_paletteless_size=[number]: number of bytes under which to try"
+         " non-paletted version of image that would normally use a palette."
+         " Default: 2048\n"
          "--keepchunks=nAME,nAME,...: keep metadata chunks with these names"
          " that would normally be removed, e.g. tEXt,zTXt,iTXt,gAMA, ... \n"
          " Due to adding extra data, this increases the result size. Keeping"
@@ -183,7 +192,7 @@ void ShowHelp() {
          "Optimize multiple files: zopflipng --prefix a.png b.png c.png\n"
          "Compress really good and trying all filter strategies: zopflipng"
          " --iterations=500 --filters=01234mywebipg --lossy_8bit"
-         " --alpha_cleaner=012345 infile.png outfile.png\n");
+         " --alpha_cleaners=bhvapw infile.png outfile.png\n");
 }
 
 void PrintSize(const char* label, size_t size) {
@@ -244,18 +253,26 @@ int main(int argc, char *argv[]) {
         always_zopflify = true;
       } else if (name == "--verbose") {
         png_options.verbose = true;
-      } else if (name == "--alpha_cleaner") {
+      } else if (name == "--alpha_cleaners") {
         for (size_t j = 0; j < value.size(); j++) {
-          signed char f = value[j] - '0';
-          if (f >= 0 && f <= 5) {
-            png_options.lossy_transparent |= (1 << f);
-          } else {
-            printf("Unknown alpha cleaning method: %i\n", f);
-            return 1;
+          char c = value[j];
+          int cleaner = 0;
+          switch (c) {
+            case 'n': cleaner = 0; break;
+            case 'b': cleaner = 1; break;
+            case 'h': cleaner = 2; break;
+            case 'v': cleaner = 3; break;
+            case 'a': cleaner = 4; break;
+            case 'p': cleaner = 5; break;
+            case 'w': cleaner = 6; break;
+            default:
+              printf("Unknown alpha cleaning method: %c\n", c);
+              return 1;
           }
+          png_options.lossy_transparent |= (1 << cleaner);
         }
       } else if (name == "--lossy_transparent") {
-        png_options.lossy_transparent |= 2;
+        png_options.lossy_transparent |= 4;
       } else if (name == "--lossy_8bit") {
         png_options.lossy_8bit = true;
       } else if (name == "--iterations") {
@@ -299,15 +316,15 @@ int main(int argc, char *argv[]) {
       } else if (name == "--palette_priorities") {
         for (size_t j = 0; j < value.size(); j++) {
           ZopfliPNGPalettePriority popularity = kPriorityPopularity;
-          char f = value[j];
-          switch (f) {
+          char p = value[j];
+          switch (p) {
             case 'p': popularity = kPriorityPopularity; break;
             case 'r': popularity = kPriorityRGB; break;
             case 'y': popularity = kPriorityYUV; break;
             case 'l': popularity = kPriorityLab; break;
             case 'm': popularity = kPriorityMSB; break;
             default:
-              printf("Unknown palette priority: %c\n", f);
+              printf("Unknown palette priority: %c\n", p);
               return 1;
           }
           png_options.palette_priorities.push_back(popularity);
@@ -315,12 +332,12 @@ int main(int argc, char *argv[]) {
       } else if (name == "--palette_directions") {
         for (size_t j = 0; j < value.size(); j++) {
           ZopfliPNGPaletteDirection direction = kDirectionAscending;
-          char f = value[j];
-          switch (f) {
+          char d = value[j];
+          switch (d) {
             case 'a': direction = kDirectionAscending; break;
             case 'd': direction = kDirectionDescending; break;
             default:
-              printf("Unknown palette direction: %c\n", f);
+              printf("Unknown palette direction: %c\n", d);
               return 1;
           }
           png_options.palette_directions.push_back(direction);
@@ -328,13 +345,13 @@ int main(int argc, char *argv[]) {
       } else if (name == "--palette_transparencies") {
         for (size_t j = 0; j < value.size(); j++) {
           ZopfliPNGPaletteTransparency transparency = kTransparencyIgnore;
-          char f = value[j];
-          switch (f) {
+          char t = value[j];
+          switch (t) {
             case 'i': transparency = kTransparencyIgnore; break;
             case 's': transparency = kTransparencySort; break;
             case 'f': transparency = kTransparencyFirst; break;
             default:
-              printf("Unknown palette direction: %c\n", f);
+              printf("Unknown palette direction: %c\n", t);
               return 1;
           }
           png_options.palette_transparencies.push_back(transparency);
@@ -342,19 +359,22 @@ int main(int argc, char *argv[]) {
       } else if (name == "--palette_orders") {
         for (size_t j = 0; j < value.size(); j++) {
           ZopfliPNGPaletteOrder order = kOrderNone;
-          char f = value[j];
-          switch (f) {
+          char o = value[j];
+          switch (o) {
             case 'p': order = kOrderNone; break;
             case 'g': order = kOrderGlobal; break;
             case 'd': order = kOrderNearest; break;
             case 'w': order = kOrderWeight; break;
             case 'n': order = kOrderNeighbor; break;
             default:
-              printf("Unknown palette order: %c\n", f);
+              printf("Unknown palette order: %c\n", o);
               return 1;
           }
           png_options.palette_orders.push_back(order);
         }
+      } else if (name == "--try_paletteless_size") {
+        if (num < 0) num = 0;
+        png_options.try_paletteless_size = num;
       } else if (name == "--keepchunks") {
         bool correct = true;
         if ((value.size() + 1) % 5 != 0) correct = false;
