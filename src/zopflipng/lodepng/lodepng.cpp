@@ -3900,7 +3900,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
           sortfield[best] ^= sortfield[i];
           sortfield[i] ^= sortfield[best];
         }
-        sortfield[i] |= i << 40;
+        sortfield[i] |= uint64_t(i) << 40;
         const unsigned char* c = (unsigned char*)&palette_in[sortfield[i] & 0xFF];
         const int r = c[0];
         const int g = c[1];
@@ -3923,7 +3923,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
           }
         }
       }
-      sortfield[count - 1] |= (uint64_t(count) - 1) << 40;
+      sortfield[count - 1] |= uint64_t(count - 1) << 40;
       break;
     case LPOS_NEAREST_WEIGHT:
       {
@@ -3957,7 +3957,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
             }
           }
         }
-        sortfield[count - 1] |= (uint64_t(count) - 1) << 40;
+        sortfield[count - 1] |= uint64_t(count - 1) << 40;
       }
       break;
     case LPOS_NEAREST_NEIGHBOR:
@@ -4024,7 +4024,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
             }
           }
         }
-        sortfield[count - 1] |= (uint64_t(count) - 1) << 40;
+        sortfield[count - 1] |= uint64_t(count - 1) << 40;
         color_tree_cleanup(&paltree);
         color_tree_cleanup(&neighbors);
       }
@@ -4032,7 +4032,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
   }
   std::sort(sortfield, sortfield + count);
   uint32_t* palette_out = (uint32_t*)lodepng_malloc(mode_out->palettesize << 2);
-  for (size_t i = 0; i < mode_out->palettesize; i++) {
+  for (size_t i = 0; i < mode_out->palettesize; ++i) {
     palette_out[i] = palette_in[sortfield[i] & 0xFF];
   }
   std::copy(palette_out, palette_out + mode_out->palettesize, palette_in);
