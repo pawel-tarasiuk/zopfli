@@ -187,8 +187,10 @@ void ShowHelp() {
          " without improvement. Default: 15\n"
          "--ga_mutation_probability: probability of mutation per gene per"
          " generation. Default: 0.01\n"
-         "--ga_crossover_probability: probability of crossover pergeneration."
+         "--ga_crossover_probability: probability of crossover per generation."
          " Default: 0.9\n"
+         "--ga_tournament_size: number of individuals selected in tournament."
+         " Default: 2\n"
          "--ga_number_of_offspring: number of offspring per generation."
          " Default: 2\n"
          "\n"
@@ -416,6 +418,9 @@ int main(int argc, char *argv[]) {
         if (num < 0) num = 0;
         if (num > 1) num = 1;
         png_options.ga_crossover_probability = num;
+      } else if (name == "--ga_tournament_size") {
+        if (num < 1) num = 1;
+        png_options.ga_tournament_size = num;
       } else if (name == "--ga_number_of_offspring") {
         if (num < 1) num = 1;
         png_options.ga_number_of_offspring = num;

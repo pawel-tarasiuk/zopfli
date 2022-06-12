@@ -48,6 +48,7 @@ ZopfliPNGOptions::ZopfliPNGOptions()
   , ga_stagnate_evaluations(15)
   , ga_mutation_probability(0.01)
   , ga_crossover_probability(0.9)
+  , ga_tournament_size(2)
   , ga_number_of_offspring(2) {
 }
 
@@ -417,6 +418,8 @@ unsigned TryOptimize(
         png_options->ga_mutation_probability;
       state.encoder.ga.crossover_probability =
         png_options->ga_crossover_probability;
+      state.encoder.ga.tournament_size =
+        png_options->ga_tournament_size;
       state.encoder.ga.number_of_offspring =
         std::min(png_options->ga_number_of_offspring,
                 png_options->ga_population_size);
@@ -974,6 +977,7 @@ extern "C" void CZopfliPNGSetDefaults(CZopfliPNGOptions* png_options) {
   png_options->ga_stagnate_evaluations  = opts.ga_stagnate_evaluations;
   png_options->ga_mutation_probability  = opts.ga_mutation_probability;
   png_options->ga_crossover_probability = opts.ga_crossover_probability;
+  png_options->ga_tournament_size       = opts.ga_tournament_size;
   png_options->ga_number_of_offspring   = opts.ga_number_of_offspring;
 }
 
@@ -1001,6 +1005,7 @@ extern "C" int CZopfliPNGOptimize(const unsigned char* origpng,
   opts.ga_stagnate_evaluations  = png_options->ga_stagnate_evaluations;
   opts.ga_mutation_probability  = png_options->ga_mutation_probability;
   opts.ga_crossover_probability = png_options->ga_crossover_probability;
+  opts.ga_tournament_size       = png_options->ga_tournament_size;
   opts.ga_number_of_offspring   = png_options->ga_number_of_offspring;
 
   for (int i = 0; i < png_options->num_filter_strategies; i++) {

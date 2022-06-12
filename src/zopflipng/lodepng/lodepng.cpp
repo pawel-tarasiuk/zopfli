@@ -6123,7 +6123,7 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
     unsigned best_size = UINT_MAX;
     unsigned total_size = 0;
     unsigned e_since_best = 0;
-    unsigned tournament_size = 2;
+    unsigned tournament_size = settings->ga.tournament_size;
     /* for very small images, try every combination instead of genetic algorithm */
     if(h * log(5) < log(population_size * settings->ga.number_of_stagnations))
     {
