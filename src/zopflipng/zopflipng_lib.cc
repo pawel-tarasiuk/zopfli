@@ -35,6 +35,7 @@ ZopfliPNGOptions::ZopfliPNGOptions()
   , lossy_transparent(0)
   , lossy_8bit(false)
   , auto_filter_strategy(true)
+  , keep_colortype(false)
   , use_zopfli(true)
   , num_iterations(15)
   , num_iterations_large(5)
@@ -390,10 +391,10 @@ unsigned TryOptimize(
     case kStrategyMinSum:
       state.encoder.filter_strategy = LFS_MINSUM;
       break;
-  case kStrategyDistinctBytes:
+    case kStrategyDistinctBytes:
       state.encoder.filter_strategy = LFS_DISTINCT_BYTES;
       break;
-  case kStrategyDistinctBigrams:
+    case kStrategyDistinctBigrams:
       state.encoder.filter_strategy = LFS_DISTINCT_BIGRAMS;
       break;
     case kStrategyEntropy:
@@ -402,10 +403,10 @@ unsigned TryOptimize(
     case kStrategyBruteForce:
       state.encoder.filter_strategy = LFS_BRUTE_FORCE;
       break;
-  case kStrategyIncremental:
+    case kStrategyIncremental:
       state.encoder.filter_strategy = LFS_INCREMENTAL;
       break;
-  case kStrategyGeneticAlgorithm:
+    case kStrategyGeneticAlgorithm:
       state.encoder.filter_strategy = LFS_GENETIC_ALGORITHM;
       state.encoder.predefined_filters = filterbank;
       state.encoder.ga.number_of_generations = png_options->ga_max_evaluations;
@@ -418,16 +419,19 @@ unsigned TryOptimize(
         png_options->ga_crossover_probability;
       state.encoder.ga.number_of_offspring =
         std::min(png_options->ga_number_of_offspring,
-                 png_options->ga_population_size);
+                png_options->ga_population_size);
       break;
     case kStrategyOne:
+      state.encoder.filter_strategy = LFS_ONE;
+      break;
     case kStrategyTwo:
+      state.encoder.filter_strategy = LFS_TWO;
+      break;
     case kStrategyThree:
+      state.encoder.filter_strategy = LFS_THREE;
+      break;
     case kStrategyFour:
-      // Set the filters of all scanlines to that number.
-      filters.resize(h, filterstrategy);
-      state.encoder.filter_strategy = LFS_PREDEFINED;
-      state.encoder.predefined_filters = &filters[0];
+      state.encoder.filter_strategy = LFS_FOUR;
       break;
     case kStrategyPredefined:
       lodepng::getFilterTypes(filters, origfile);
@@ -451,7 +455,7 @@ unsigned TryOptimize(
     case kPriorityLab:
       state.encoder.palette_priority = LPPS_LAB;
       break;
-  case kPriorityMSB:
+    case kPriorityMSB:
       state.encoder.palette_priority = LPPS_MSB;
       break;
     default:
@@ -521,30 +525,24 @@ unsigned TryOptimize(
 
   // For very small output, also try without palette, it may be smaller thanks
   // to no palette storage overhead.
-  if (!error && out->size() < (unsigned) png_options->try_paletteless_size
-      && !keep_colortype && try_paletteless
-      && outputstate.info_png.color.colortype == LCT_PALETTE) {
-    if (png_options->verbose) {
-      printf("Palette was used,"
-             " compressed result is small enough to also try RGB or grey.\n");
+  if (!error && out->size() < 4096 && !keep_colortype) {
+    if (lodepng::getPNGHeaderInfo(*out).color.colortype == LCT_PALETTE) {
+      LodePNGColorStats stats;
+      lodepng_color_stats_init(&stats);
+      lodepng_compute_color_stats(&stats, &image[0], w, h, &state.info_raw);
+      // Too small for tRNS chunk overhead.
+      if (w * h <= 16 && stats.key) stats.alpha = 1;
+      state.encoder.auto_convert = 0;
+      state.info_png.color.colortype = (stats.alpha ? LCT_RGBA : LCT_RGB);
+      state.info_png.color.bitdepth = 8;
+      state.info_png.color.key_defined = (stats.key && !stats.alpha);
+      if (state.info_png.color.key_defined) {
+        state.info_png.color.key_defined = 1;
+        state.info_png.color.key_r = (stats.key_r & 255u);
+        state.info_png.color.key_g = (stats.key_g & 255u);
+        state.info_png.color.key_b = (stats.key_b & 255u);
+      }
     }
-    out2.clear();
-    LodePNGColorProfile profile;
-    lodepng_color_profile_init(&profile);
-    lodepng_get_color_profile(&profile, &image[0], w, h, &state.info_raw);
-    // Too small for tRNS chunk overhead.
-    if (w * h <= 16 && profile.key) profile.alpha = 1;
-    state.encoder.auto_convert = 0;
-    state.info_png.color.colortype = (profile.alpha ? LCT_RGBA : LCT_RGB);
-    state.info_png.color.bitdepth = 8;
-    state.info_png.color.key_defined = (profile.key && !profile.alpha);
-    if (state.info_png.color.key_defined) {
-      state.info_png.color.key_defined = 1;
-      state.info_png.color.key_r = (profile.key_r & 255u);
-      state.info_png.color.key_g = (profile.key_g & 255u);
-      state.info_png.color.key_b = (profile.key_b & 255u);
-    }
-
     error = lodepng::encode(out2, image, w, h, state);
     if (!error && out2.size() < out->size()) {
       out->swap(out2);
@@ -710,7 +708,7 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
   lodepng::State inputstate;
   error = lodepng::decode(image, w, h, inputstate, origpng);
 
-  bool keep_colortype = false;
+  bool keep_colortype = png_options.keep_colortype;
 
   if (!png_options.keepchunks.empty()) {
     // If the user wants to keep the non-essential chunks bKGD or sBIT, the
@@ -722,10 +720,12 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     // possible.
     std::set<std::string> keepchunks;
     ChunksToKeep(origpng, png_options.keepchunks, &keepchunks);
-    keep_colortype = keepchunks.count("bKGD") || keepchunks.count("sBIT");
-    if (keep_colortype && verbose) {
-      printf("Forced to keep original color type due to keeping bKGD or sBIT"
-             " chunk.\n");
+    if (keepchunks.count("bKGD") || keepchunks.count("sBIT")) {
+      if (!keep_colortype && verbose) {
+        printf("Forced to keep original color type due to keeping bKGD or sBIT"
+               " chunk.\n");
+      }
+      keep_colortype = true;
     }
   }
 
@@ -749,7 +749,7 @@ int ZopfliPNGOptimize(const std::vector<unsigned char>& origpng,
     bit16 = true;
   }
 
-  std::vector<std::vector<unsigned char>> images;
+  std::vector<std::vector<unsigned char> > images;
   if (!error) {
     std::vector<unsigned char> filter;
     std::vector<unsigned char> temp;
