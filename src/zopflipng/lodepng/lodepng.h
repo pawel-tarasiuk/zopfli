@@ -28,6 +28,11 @@ freely, subject to the following restrictions:
 
 #include <string.h> /*for size_t*/
 
+#ifndef __cplusplus
+    #include <stdbool.h>
+    #include <stdint.h>
+#endif
+
 extern const char* LODEPNG_VERSION_STRING;
 
 /*

@@ -3891,6 +3891,14 @@ cleanup:
   return error;
 }
 
+static LODEPNG_INLINE int field_compare(void const* a, void const* b) {
+  uint64_t aval = *(uint64_t*)a;
+  uint64_t bval = *(uint64_t*)b;
+  if(aval < bval) return -1;
+  if(bval > aval) return 1;
+  return 0;
+}
+
 void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
                       unsigned w, unsigned h,
                       LodePNGPalettePriorityStrategy priority,
@@ -3924,7 +3932,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
     case LPPS_RGB:
       for (size_t i = 0; i < count; ++i) {
         const unsigned char* c = (unsigned char*)&palette_in[i];
-        sortfield[i] |= uint64_t(c[0]) << 32 | uint64_t(c[1]) << 24 | uint64_t(c[2]) << 16;
+        sortfield[i] |= (uint64_t)(c[0]) << 32 | (uint64_t)(c[1]) << 24 | (uint64_t)(c[2]) << 16;
       }
       break;
     case LPPS_YUV:
@@ -3933,9 +3941,9 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
         const double r = c[0];
         const double g = c[1];
         const double b = c[2];
-        sortfield[i] |= uint64_t(0.299 * r + 0.587 * g + 0.114 * b) << 32
-          | uint64_t((-0.14713 * r - 0.28886 * g + 0.436 * b + 111.18) / 0.872) << 24
-          | uint64_t((0.615 * r - 0.51499 * g - 0.10001 * b + 156.825) / 1.23) << 16;
+        sortfield[i] |= (uint64_t)(0.299 * r + 0.587 * g + 0.114 * b) << 32
+          | (uint64_t)((-0.14713 * r - 0.28886 * g + 0.436 * b + 111.18) / 0.872) << 24
+          | (uint64_t)((0.615 * r - 0.51499 * g - 0.10001 * b + 156.825) / 1.23) << 16;
       }
       break;
     case LPPS_LAB:
@@ -3955,9 +3963,9 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
           vx = vx > ep ? pow(vx, ex) : ka * vx + de;
           vy = vy > ep ? pow(vy, ex) : ka * vy + de;
           vz = vz > ep ? pow(vz, ex) : ka * vz + de;
-          sortfield[i] |= uint64_t((vy * 116 - 16) / 100 * 255) << 32
-            | uint64_t((vx - vy) * 500 + 256) << 24
-            | uint64_t((vy - vz) * 200 + 256) << 16;
+          sortfield[i] |= (uint64_t)((vy * 116 - 16) / 100 * 255) << 32
+            | (uint64_t)((vx - vy) * 500 + 256) << 24
+            | (uint64_t)((vy - vz) * 200 + 256) << 16;
         }
       }
       break;
@@ -3998,7 +4006,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
         }
       } else if(priority != LPPS_POPULARITY) {
         for (size_t i = 0; i < count; ++i) {
-          sortfield[i] |= uint64_t(((unsigned char*)&palette_in[i])[3]) << 8;
+          sortfield[i] |= (uint64_t)(((unsigned char*)&palette_in[i])[3]) << 8;
         }
       }
       break;
@@ -4042,7 +4050,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
           sortfield[best] ^= sortfield[i];
           sortfield[i] ^= sortfield[best];
         }
-        sortfield[i] |= uint64_t(i) << 40;
+        sortfield[i] |= (uint64_t)(i) << 40;
         const unsigned char* c = (unsigned char*)&palette_in[sortfield[i] & 0xFF];
         const int r = c[0];
         const int g = c[1];
@@ -4065,7 +4073,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
           }
         }
       }
-      sortfield[count - 1] |= uint64_t(count - 1) << 40;
+      sortfield[count - 1] |= (uint64_t)(count - 1) << 40;
       break;
     case LPOS_NEAREST_WEIGHT:
       {
@@ -4075,7 +4083,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
             sortfield[best] ^= sortfield[i];
             sortfield[i] ^= sortfield[best];
           }
-          sortfield[i] |= uint64_t(i) << 40;
+          sortfield[i] |= (uint64_t)(i) << 40;
           const unsigned char* c = (unsigned char*)&palette_in[sortfield[i] & 0xFF];
           const int r = c[0];
           const int g = c[1];
@@ -4099,7 +4107,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
             }
           }
         }
-        sortfield[count - 1] |= uint64_t(count - 1) << 40;
+        sortfield[count - 1] |= (uint64_t)(count - 1) << 40;
       }
       break;
     case LPOS_NEAREST_NEIGHBOR:
@@ -4140,7 +4148,7 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
             sortfield[best] ^= sortfield[i];
             sortfield[i] ^= sortfield[best];
           }
-          sortfield[i] |= uint64_t(i) << 40;
+          sortfield[i] |= (uint64_t)(i) << 40;
           const unsigned char* c = (unsigned char*)&palette_in[sortfield[i] & 0xFF];
           const int r = c[0];
           const int g = c[1];
@@ -4166,18 +4174,20 @@ void optimize_palette(LodePNGColorMode* mode_out, const uint32_t* image,
             }
           }
         }
-        sortfield[count - 1] |= uint64_t(count - 1) << 40;
+        sortfield[count - 1] |= (uint64_t)(count - 1) << 40;
         color_tree_cleanup(&paltree);
         color_tree_cleanup(&neighbors);
       }
       break;
   }
-  std::sort(sortfield, sortfield + count);
+  /* std::sort(sortfield, sortfield + count); */
+  qsort(sortfield, count, sizeof(uint64_t), field_compare);
   uint32_t* palette_out = (uint32_t*)lodepng_malloc(mode_out->palettesize << 2);
   for (size_t i = 0; i < mode_out->palettesize; ++i) {
     palette_out[i] = palette_in[sortfield[i] & 0xFF];
   }
-  std::copy(palette_out, palette_out + mode_out->palettesize, palette_in);
+  /* std::copy(palette_out, palette_out + mode_out->palettesize, palette_in); */
+  lodepng_memcpy(palette_in, palette_out, (mode_out->palettesize << 2));
   lodepng_free(palette_out);
   lodepng_free(sortfield);
   color_tree_cleanup(&tree);
@@ -5770,7 +5780,7 @@ static uint64_t randomUInt64(uint64_t* s) {
 
 /* generate random number between 0 and 1 */
 static double randomDecimal(uint64_t* s) {
-  return double(randomUInt64(s)) / UINT64_MAX;
+  return (double)(randomUInt64(s)) / UINT64_MAX;
 }
 
 static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, unsigned h,
@@ -6115,7 +6125,7 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
     zlibsettings.custom_deflate = 0;
     const size_t population_size = settings->ga.population_size;
     const size_t last = population_size - 1;
-    unsigned char* population = (unsigned char*)lodepng_malloc(h * std::max(int(population_size), 2));
+    unsigned char* population = (unsigned char*)lodepng_malloc(h * LODEPNG_MAX((int)(population_size), 2));
     size_t* size = (size_t*)lodepng_malloc(population_size * sizeof(size_t));
     unsigned* ranking = (unsigned*)lodepng_malloc(population_size * sizeof(int));
     unsigned g, i, j, e, t, c, type, crossover1, crossover2, selection_size, size_sum;
@@ -6199,13 +6209,13 @@ static unsigned filter(unsigned char* out, const unsigned char* in, unsigned w, 
           /*tournament selection*/
           /*parent 1*/
           selection_size = UINT_MAX;
-          for(t = 0; t < tournament_size; ++t) selection_size = std::min(unsigned(randomDecimal(r) * total_size), selection_size);
+          for(t = 0; t < tournament_size; ++t) selection_size = LODEPNG_MIN((unsigned)(randomDecimal(r) * total_size), selection_size);
           size_sum = 0;
           for(j = 0; size_sum <= selection_size; ++j) size_sum += size[ranking[j]];
           parent1 = &population[ranking[j - 1] * h];
           /*parent 2*/
           selection_size = UINT_MAX;
-          for(t = 0; t < tournament_size; ++t) selection_size = std::min(unsigned(randomDecimal(r) * total_size), selection_size);
+          for(t = 0; t < tournament_size; ++t) selection_size = LODEPNG_MIN((unsigned)(randomDecimal(r) * total_size), selection_size);
           size_sum = 0;
           for(j = 0; size_sum <= selection_size; ++j) size_sum += size[ranking[j]];
           parent2 = &population[ranking[j - 1] * h];
