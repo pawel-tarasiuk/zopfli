@@ -257,6 +257,7 @@ void LossyOptimizeTransparent(unsigned char* image, unsigned w, unsigned h,
           }
         }
       }
+      break;
     case 5: // Paeth filter
       for (size_t j = 3; j < (w << 2); j += 4) {  // First line (border effects)
         // if alpha is 0, alter the RGB value to a possibly more efficient one.
@@ -362,6 +363,8 @@ unsigned TryOptimize(
   state.encoder.verbose = png_options->verbose;
   state.encoder.zlibsettings.windowsize = windowsize;
   state.encoder.zlibsettings.nicematch = 258;
+
+  (void)(try_paletteless);
 
   if (use_zopfli && png_options->use_zopfli) {
     state.encoder.zlibsettings.custom_deflate = CustomPNGDeflate;
