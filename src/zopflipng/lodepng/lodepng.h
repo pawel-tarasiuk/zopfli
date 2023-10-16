@@ -80,13 +80,6 @@ the custom_zlib field of the compress and decompress settings*/
 #define LODEPNG_COMPILE_ERROR_TEXT
 #endif
 
-/*Compile the default allocators (C's free, malloc and realloc). If you disable this,
-you can define the functions lodepng_free, lodepng_malloc and lodepng_realloc in your
-source files with custom allocators.*/
-#ifndef LODEPNG_NO_COMPILE_ALLOCATORS
-#define LODEPNG_COMPILE_ALLOCATORS
-#endif
-
 /*compile the C++ version (you can disable the C++ wrapper here even when compiling for C++)*/
 #ifdef __cplusplus
 #ifndef LODEPNG_NO_COMPILE_CPP
@@ -98,6 +91,31 @@ source files with custom allocators.*/
 #include <vector>
 #include <string>
 #endif /*LODEPNG_COMPILE_CPP*/
+
+/*Compile the default allocators (C's free, malloc and realloc). If you disable this,
+you can define the functions lodepng_free, lodepng_malloc and lodepng_realloc in your
+source files with custom allocators.*/
+#ifndef LODEPNG_NO_COMPILE_ALLOCATORS
+#define LODEPNG_COMPILE_ALLOCATORS
+#else /*LODEPNG_NO_COMPILE_ALLOCATORS*/
+#if defined(LODEPNG_COMPILE_CPP) && defined(LODEPNG_EXTERNAL_ALLOCATORS_C)
+extern "C" void* lodepng_malloc(size_t size);
+extern "C" void* lodepng_realloc(void* ptr, size_t new_size);
+extern "C" void lodepng_free(void* ptr);
+
+namespace lodepng {
+  void *lodepng_malloc(size_t size);
+
+  void *lodepng_realloc(void* ptr, size_t new_size);
+
+  void lodepng_free(void* ptr);
+}
+#else
+void* lodepng_malloc(size_t size);
+void* lodepng_realloc(void* ptr, size_t new_size);
+void lodepng_free(void* ptr);
+#endif
+#endif /*LODEPNG_NO_COMPILE_ALLOCATORS*/
 
 #ifdef LODEPNG_COMPILE_PNG
 /*The PNG color types (also used for raw image).*/

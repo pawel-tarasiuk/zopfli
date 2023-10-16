@@ -35,9 +35,7 @@ Rename this file to lodepng.cpp to use it for C++, or to lodepng.c to use it for
 #include <stdio.h> /* file handling */
 #endif /* LODEPNG_COMPILE_DISK */
 
-#ifdef LODEPNG_COMPILE_ALLOCATORS
 #include <stdlib.h> /* allocations */
-#endif /* LODEPNG_COMPILE_ALLOCATORS */
 
 #include <math.h>
 
@@ -73,7 +71,7 @@ lodepng source code. Don't forget to remove "static" if you copypaste them
 from here.*/
 
 #ifdef LODEPNG_COMPILE_ALLOCATORS
-static void* lodepng_malloc(size_t size) {
+void* lodepng_malloc(size_t size) {
 #ifdef LODEPNG_MAX_ALLOC
   if(size > LODEPNG_MAX_ALLOC) return 0;
 #endif
@@ -81,21 +79,33 @@ static void* lodepng_malloc(size_t size) {
 }
 
 /* NOTE: when realloc returns NULL, it leaves the original memory untouched */
-static void* lodepng_realloc(void* ptr, size_t new_size) {
+void* lodepng_realloc(void* ptr, size_t new_size) {
 #ifdef LODEPNG_MAX_ALLOC
   if(new_size > LODEPNG_MAX_ALLOC) return 0;
 #endif
   return realloc(ptr, new_size);
 }
 
-static void lodepng_free(void* ptr) {
+void lodepng_free(void* ptr) {
   free(ptr);
 }
 #else /*LODEPNG_COMPILE_ALLOCATORS*/
 /* TODO: support giving additional void* payload to the custom allocators */
-void* lodepng_malloc(size_t size);
-void* lodepng_realloc(void* ptr, size_t new_size);
-void lodepng_free(void* ptr);
+#if defined(LODEPNG_COMPILE_CPP) && defined(LODEPNG_EXTERNAL_ALLOCATORS_C)
+namespace lodepng {
+  void *lodepng_malloc(size_t size) {
+    return ::lodepng_malloc(size);
+  }
+
+  void *lodepng_realloc(void* ptr, size_t new_size) {
+    return ::lodepng_realloc(ptr, new_size);
+  }
+
+  void lodepng_free(void* ptr) {
+    return ::lodepng_free(ptr);
+  }
+}
+#endif /*LODEPNG_COMPILE_CPP && LODEPNG_EXTERNAL_ALLOCATORS_C*/
 #endif /*LODEPNG_COMPILE_ALLOCATORS*/
 
 /* convince the compiler to inline a function, for use when this measurably improves performance */
