@@ -27,10 +27,10 @@ freely, subject to the following restrictions:
 #define LODEPNG_H
 
 #include <string.h> /*for size_t*/
+#include <stdint.h>
 
 #ifndef __cplusplus
     #include <stdbool.h>
-    #include <stdint.h>
 #endif
 
 extern const char* LODEPNG_VERSION_STRING;
