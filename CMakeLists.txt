@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(Zopfli VERSION 1.0.3 LANGUAGES C CXX)
+project(Zopfli VERSION 1.0.4 LANGUAGES C CXX)
 
 # Check if Zopfli is the top-level project (standalone), or a subproject
 set(zopfli_standalone FALSE)
