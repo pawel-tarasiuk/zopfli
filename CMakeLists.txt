@@ -60,6 +60,14 @@ endif()
 
 include(GNUInstallDirs)
 
+# Disable vectorization of loops where it requires runtime alignment checks.
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  add_compile_options("$<$<COMPILE_LANGUAGE:C>:-fvect-cost-model=cheap>")
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-fvect-cost-model=cheap>")
+endif()
+
 #
 # libzopfli
 #

@@ -4,6 +4,14 @@ CXX ?= g++
 override CFLAGS := -W -Wall -Wextra -ansi -pedantic -lm -O3 -Wno-unused-function -fPIC $(CFLAGS)
 override CXXFLAGS := -W -Wall -Wextra -ansi -pedantic -O3 -fPIC $(CXXFLAGS)
 
+# For GCC, disable vectorization of loops where it requires runtime alignment checks.
+ifneq (,$(findstring gcc version,$(shell $(CC) -v 2>&1)))
+override CFLAGS += -fvect-cost-model=cheap
+endif
+ifneq (,$(findstring gcc version,$(shell $(CXX) -v 2>&1)))
+override CXXFLAGS += -fvect-cost-model=cheap
+endif
+
 ZOPFLILIB_SRC = src/zopfli/blocksplitter.c src/zopfli/cache.c\
                 src/zopfli/deflate.c src/zopfli/gzip_container.c\
                 src/zopfli/hash.c src/zopfli/katajainen.c\
